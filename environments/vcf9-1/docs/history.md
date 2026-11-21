@@ -648,3 +648,6 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   dd_esx_key/dd_esx_user removed; README demo prerequisites (no ESXi SSH, ESXi 7.0 U3+), dsgrow-demo and
   vmfs-datastore-expand skills, esx_nqn probe updated. Checked: unit 157, lint, offline, init dry run (same host
   group decision, NQNs from vCenter), esx_nqn probe failed=0. First real use: the next init.
+- Init (owner: "initialize the demo", `.state/logs/init-20261121T130318Z.log`): ok=67 changed=13 failed=0, about 2 min 25 s.
+  First real run of the NQN read from vCenter (no SSH to ESXi): host group vcf9-1-w02 (exactly esx07-09) chosen as
+  before. Read-back: dsgrow-demo01 199.75 GiB at 1.8 %, volume 200 GiB, lock released.
