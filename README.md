@@ -180,3 +180,7 @@ evidence.
 Everpure's [flasharray-eda](https://github.com/sdodsley/flasharray-eda) prototype has a capacity rulebook with an
 approval gate and a guarded volume expansion. It is array-driven and doesn't touch VMFS; dsgrow starts from the
 VCF Operations alert and finishes the vSphere side.
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE).
