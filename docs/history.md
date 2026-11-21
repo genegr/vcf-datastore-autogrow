@@ -586,3 +586,13 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
 - Cleanup (owner: "now clean up the environment", `.state/logs/cleanup-20261121T093115Z.log`): removed dsgrow-demo-vm
   (with the hand-added disk), dsgrow-demo01 datastore and the 256 GiB volume; ok=63 changed=11 failed=0, HA policy
   restored. Read-back: datastore and volume absent, lock released.
+
+## 2026-11-21: GitHub (public)
+
+- Owner: store the repo on GitHub with a README, a compact CLAUDE.md, skills of reasonable size; public, history kept
+  without personal data. Lab addresses moved to the gitignored inventory/vcf9-1/group_vars/dsgrow/site.yml
+  (dsgrow_site; template inventory/site.example.yml), loaded by the inventory and every vars_files list; values
+  checked to render with the right types through the inventory and two read-only probes (fa_identity, demo_status).
+  test_no_private_addresses_committed guards it. The owner's name and Slack ID replaced in this file. Local only
+  (.gitignore): site.yml, .sync.env, tests/probes/w01_* (nested-vcf w01 investigation). CLAUDE.md 230 -> 82 lines;
+  skills rewritten to 40-74 lines each; new skill lab-change-gate; README.md written; .gitattributes keeps LF.
