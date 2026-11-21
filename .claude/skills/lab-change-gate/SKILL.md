@@ -12,7 +12,7 @@ Real systems: vCenter, FlashArray, VCF Ops, the Slack workspace and the run host
 2. **Go-ahead**: the owner's, for that change only. Say what changes, the rollback and the read-back.
 3. **Run**: `bash tools/setup.sh setup/<step>.yml --confirm <step>.yml`. Stop at the first failure and report.
 4. **Read-back**: a probe or the dry run again, which must report `changed=0`.
-5. Record it in `docs/history.md` (what, when, log file, read-back).
+5. Record it in `environments/<env>/docs/history.md` (what, when, log file, read-back).
 
 Steps, owners and rollbacks: `setup/README.md`. Logs: `.state/logs/<playbook>-<UTC>[-check].log`.
 
@@ -22,14 +22,14 @@ Steps, owners and rollbacks: `setup/README.md`. Logs: `.state/logs/<playbook>-<U
 - `bash tools/sync.sh` copies the tree to the run host (`SYNC_HOST` from the gitignored `.sync.env`). It never
   deletes: after removing or renaming a file, delete it on the run host too.
 - On the run host, in the repo, everything runs in the `dsgrow-eda:1` image. `.env` names the environment
-  (`DSGROW_ENV` → `inventory/<env>/`, passed as `dsgrow_env`) and the optional lab directory mounted at `/lab`:
-  - `bash tools/probe.sh tests/probes/<probe>.yml`: read-only probes; `inventory/<env>/probes/` holds one lab's own investigations.
+  (`DSGROW_ENV` → `environments/<env>/inventory/`, passed as `dsgrow_env`) and the optional lab directory mounted at `/lab`:
+  - `bash tools/probe.sh tests/probes/<probe>.yml`: read-only probes; `environments/<env>/probes/` holds one lab's own investigations.
   - `bash tools/offline.sh`: syntax and `tests/offline/logic.yml`, no network.
   - `docker compose run --rm -T eda ansible-lint [paths]`.
   - Services: `docker compose up -d rulebook bridge`. The rulebook mounts the repo (playbook changes apply on sync;
     rulebook changes need a restart). The bridge bakes its code into the image (rebuild after changes).
 - Secrets: `.state/` (vault, env files, `vault-pass`), never in git. Addresses: the gitignored
-  `inventory/<env>/group_vars/dsgrow/site.yml` (`dsgrow_site`; template `inventory/example/group_vars/dsgrow/site.yml.example`).
+  `environments/<env>/inventory/group_vars/dsgrow/site.yml` (`dsgrow_site`; template `environments/example/inventory/group_vars/dsgrow/site.yml.example`).
 
 ## Rules
 

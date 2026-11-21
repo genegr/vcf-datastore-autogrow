@@ -51,7 +51,7 @@ Expected: proposal ~1-2 min after start, options 256 / 272 / 288 GiB (16 GiB ste
 
 ## Objects and identity
 
-Inventory `dsgrow_demo` (`inventory/<env>/group_vars/dsgrow/demo.yml`): volume and datastore, VM, template and its
+Inventory `dsgrow_demo` (`environments/<env>/inventory/group_vars/dsgrow/demo.yml`): volume and datastore, VM, template and its
 datastore, hosts, array. Lab access (admin credentials, SSH keys, jump host, OVA): `lab.yml`. Init records what it made in
 `.state/demo/state.json` (serial, EUI, VMFS UUID, datastore moref + vCenter UUID, VM UUID, `attach`). Start and
 cleanup refuse on any mismatch. A failed init is resumable: rerun init, or clean up.

@@ -109,7 +109,7 @@ def test_no_self_referencing_variables_multiline():
 def test_demo_never_removes_the_template():
     """Owner 2026-11-20: the Ubuntu template survives every demo reset (no re-deploy, no download). It lives on the
     domain's main datastore, never on the demo datastore that cleanup destroys, and no demo task removes it."""
-    for inv in (ROOT / "inventory").glob("*/group_vars/dsgrow/demo.yml"):
+    for inv in (ROOT / "environments").glob("*/inventory/group_vars/dsgrow/demo.yml"):
         demo = _load(inv)["dsgrow_demo"]
         assert demo["template_datastore"] != demo["datastore"], inv
     for path in _yaml_files("demo"):
@@ -197,7 +197,7 @@ def test_flasharray_destroy_only_in_demo():
 def test_flasharrays_have_purity_name_and_stable_key():
     """name = the array's Purity name (shown); key = the stable alias that names its secret and env var, so a rename
     of `name` never orphans a token (owner 2026-11-20: z-x70-a -> z-fastaines-f)."""
-    for inv in (ROOT / "inventory").glob("*/group_vars/dsgrow/flasharrays.yml"):
+    for inv in (ROOT / "environments").glob("*/inventory/group_vars/dsgrow/flasharrays.yml"):
         arrays = (_load(inv) or {})["dsgrow_flasharrays"]
         for a in arrays:
             assert {"name", "key", "url", "token_env"} <= set(a), (inv, a)
@@ -288,7 +288,7 @@ def test_alert_definitions_in_sync():
 def test_policy_caps_within_vmfs6():
     policy = _load(ROOT / "playbooks/group_vars/all/dsgrow.yml")
     assert policy["dsgrow_max_volume_bytes"] <= 64 * 1024 ** 4
-    for inv in (ROOT / "inventory").glob("*/group_vars/dsgrow/*.yml"):
+    for inv in (ROOT / "environments").glob("*/inventory/group_vars/dsgrow/*.yml"):
         data = _load(inv) or {}
         if "dsgrow_max_volume_bytes" in data:
             assert data["dsgrow_max_volume_bytes"] <= 64 * 1024 ** 4, inv
@@ -412,7 +412,7 @@ def test_execute_refreshes_only_lagging_hosts():
 
 # ------------------------------------------------------------------ public repo: no addresses in git
 PRIVATE_IP = re.compile(r"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b")
-NOT_IN_GIT = ("site.yml",)                    # inventory/<env>/group_vars/dsgrow/site.yml is gitignored
+NOT_IN_GIT = ("site.yml",)                    # environments/<env>/inventory/group_vars/dsgrow/site.yml is gitignored
 SKIP_DIRS = {".git", ".venv", ".state", "state", "__pycache__", ".pytest_cache", "out"}
 
 
@@ -445,7 +445,7 @@ NEUTRAL_DIRS = ["playbooks", "roles", "rulebooks", "plugins", "bridge", "demo", 
 
 
 def test_code_is_environment_neutral():
-    """Lab specifics live in inventory/<env>/ (and docs); code, probes and fixtures name no lab, so the demo runs in any
+    """Lab specifics live in environments/<env>/inventory/ (and docs); code, probes and fixtures name no lab, so the demo runs in any
     environment that meets the README's prerequisites."""
     found = []
     files = [ROOT / "compose.yaml", ROOT / "ansible.cfg"] + sorted((ROOT / "setup").glob("*.yml"))
@@ -463,3 +463,16 @@ def test_code_is_environment_neutral():
             if LAB_SPECIFIC.search(line):
                 found.append("%s:%d: %s" % (rel.as_posix(), n, line.strip()[:80]))
     assert not found, "\n".join(found)
+
+
+def test_lab_files_live_under_environments():
+    """Owner 2026-11-21: everything specific to one lab is in environments/<env>/ (inventory, probes, docs); the generic
+    project has no inventory or lab docs of its own. Each environment has the files the playbooks load."""
+    assert not (ROOT / "inventory").exists() and not (ROOT / "docs").exists()
+    envs = sorted(p for p in (ROOT / "environments").iterdir() if p.is_dir())
+    assert {"example", "vcf9-1"} <= {p.name for p in envs}
+    for env in envs:
+        gv = env / "inventory" / "group_vars" / "dsgrow"
+        for name in ("vcenters.yml", "flasharrays.yml", "eda.yml", "policy.yml", "demo.yml", "lab.yml"):
+            assert (gv / name).is_file(), gv / name
+        assert (env / "inventory" / "hosts.yml").is_file(), env

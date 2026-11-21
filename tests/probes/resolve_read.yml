@@ -9,11 +9,11 @@
   gather_facts: false
   vars_files:
     - /work/playbooks/group_vars/all/dsgrow.yml
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/policy.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/demo.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/vcenters.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/site.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/policy.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/demo.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/vcenters.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/flasharrays.yml"
   vars:
     pr_ds: "{{ dsgrow_demo.datastore }}"
     dsgrow_alert:

@@ -14,5 +14,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# The lab's addresses (public repo: template inventory/example/group_vars/dsgrow/site.yml.example)
-inventory/*/group_vars/dsgrow/site.yml
+# The lab's addresses (public repo: template environments/example/inventory/group_vars/dsgrow/site.yml.example)
+environments/*/inventory/group_vars/dsgrow/site.yml

@@ -18,7 +18,7 @@ x-eda: &eda
   environment:
     HOME: /work/.state/home
     ANSIBLE_CONFIG: /work/ansible.cfg
-    ANSIBLE_INVENTORY: /work/inventory/${DSGROW_ENV:?set DSGROW_ENV in .env (see .env.example)}
+    ANSIBLE_INVENTORY: /work/environments/${DSGROW_ENV:?set DSGROW_ENV in .env (see .env.example)}/inventory
     DSGROW_STATE_DIR: /work/state
 
 services:
@@ -37,7 +37,7 @@ services:
       - --rulebook
       - rulebooks/datastore_capacity.yml
       - --inventory
-      - inventory/${DSGROW_ENV:?set DSGROW_ENV in .env (see .env.example)}
+      - environments/${DSGROW_ENV:?set DSGROW_ENV in .env (see .env.example)}/inventory
       - --vars
       - rulebooks/vars.yml
       - --env-vars

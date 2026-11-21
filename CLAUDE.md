@@ -5,11 +5,12 @@ ansible-rulebook proposes sizes in Slack; an authorised admin clicks one; the ru
 the volume, rescans, expands the VMFS and reports in the Slack thread. This repo only grows datastores. Shrinking,
 creating, deleting and migrating are out of scope. Architecture, components and setup: `README.md`.
 
-Environments: `.env` names one (`DSGROW_ENV`) and `inventory/<env>/` describes it; `inventory/example/` is the template
-and the README lists what a lab must provide. Reference lab: `vcf9-1`, a nested VCF 9.1.1 lab built by the separate
-nested-vcf repo, which owns that lab's objects. Keep code environment-neutral: lab specifics go in `inventory/<env>/`
-(addresses in its gitignored `site.yml`, admin access in `lab.yml`, one-off probes in `probes/`). Evidence of every
-lab change: `docs/history.md`. Original design: `docs/plan.md`.
+Environments: everything specific to one lab lives in `environments/<env>/` (`inventory/`, `probes/`, `docs/`),
+nothing outside it names a lab (`test_code_is_environment_neutral`, `test_lab_files_live_under_environments`). `.env`
+selects one (`DSGROW_ENV`); `environments/example/` is the template; the README lists what a lab must provide.
+Addresses go in the gitignored `inventory/group_vars/dsgrow/site.yml`, admin access in `lab.yml`. Reference lab:
+`vcf9-1` (`environments/vcf9-1/README.md`), built by the separate nested-vcf repo, which owns its objects. Every
+change to a lab is recorded in that environment's `docs/history.md`.
 
 ## Flow in one breath
 
@@ -31,7 +32,7 @@ only writer (re-checks everything, grows the volume to absolute bytes, rescans, 
 6. **Every change is attributable**: approver ID and name in the event, log, request file and thread. The approver
    is checked against `dsgrow_approver_ids` by the bridge and again by execute.
 7. **No secrets or addresses in git.** Secrets: `.state/` on the run host, as env vars in the containers,
-   `no_log: true`. Addresses: `inventory/<env>/group_vars/dsgrow/site.yml` (gitignored, `dsgrow_site`).
+   `no_log: true`. Addresses: `environments/<env>/inventory/group_vars/dsgrow/site.yml` (gitignored, `dsgrow_site`).
 8. **Nothing deletes, renames, disconnects, unmounts, resignatures or eradicates**, except `demo/`, which removes
    only its own objects after checking them against `.state/demo/state.json`. `tests/unit/test_repo_safety.py`
    enforces it.

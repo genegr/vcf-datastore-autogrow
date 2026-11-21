@@ -615,3 +615,11 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
 - Owner: the tests/probes/w01_* files (19, gitignored, the nested-vcf w01 repair investigation) moved to the nested-vcf
   checkout, tests/probes/w01/ (with a README), on the workstation and the run host, each machine's own copy; their
   .gitignore entry and test exclusions removed.
+- Owner: "arrange the structure so that all the locally related files are in a separate directory, not mixed with the
+  generic project ones" (choice: in git, own directory). environments/<env>/{inventory,probes,docs}: vcf9-1 (the
+  reference lab: its inventory incl. the gitignored site.yml, its probes, this history and the plan) and example/
+  (the template); environments/README.md and environments/vcf9-1/README.md. Every path updated (vars_files, compose,
+  tools/env.sh, probe.sh, tests, docs, skills); test_lab_files_live_under_environments. Validated on the run host:
+  unit 157, offline, rulebook test, lint 0, probes demo_status/fa_identity/ops_read/vcf9-1 eui_serial and dry runs
+  of demo/init, setup/vcfops, setup/fa_user all failed=0. The running rulebook still uses the old inventory path until
+  it is recreated (gated); the old inventory/ and docs/ stay on the run host until then.

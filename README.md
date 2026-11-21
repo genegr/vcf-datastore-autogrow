@@ -86,14 +86,16 @@ plugins/modules/                   dsgrow_datastore_backing (read-only), dsgrow_
 bridge/                            the Slack bridge and its tests
 slack/manifest.yml                 the Slack app
 vcf-ops/payload-templates/         the three VCF Ops webhook templates
-inventory/example/                 a template environment; inventory/<env>/ per lab (vcf9-1: the reference lab)
 setup/                             one-time setup, one gated step at a time (setup/README.md)
 demo/                              a self-contained demo: init / start / cleanup
 docker/, compose.yaml              the dsgrow-eda and dsgrow-bridge images and services
 tests/                             unit, bridge, rulebook (fixtures + stub playbooks), offline logic, read-only probes
 tools/                             sync, setup and probe runners (.env), the demo follower
-docs/                              the original plan and the history of every lab change
 .claude/skills/                    working notes for Claude Code (one skill per area)
+
+environments/                      everything specific to one lab, nothing else (environments/README.md)
+  example/                         the template: inventory/ to copy for a new lab
+  vcf9-1/                          the reference lab: inventory/, probes/, docs/ (plan, history of every change)
 ```
 
 ## Prerequisites
@@ -137,9 +139,9 @@ What the environment must provide. The reference lab (inventory `vcf9-1`, a nest
 1. Clone the repo on the run host (or edit on a workstation and copy it with `tools/sync.sh`).
 2. `cp .env.example .env` and set `DSGROW_ENV` to your environment's name; set `DSGROW_LAB_DIR` if the lab's admin
    vault, SSH keys or OVA live outside the repo (mounted read-only at `/lab`).
-3. `cp -r inventory/example inventory/<env>` and edit `group_vars/dsgrow/`: `vcenters.yml`, `flasharrays.yml`,
+3. `cp -r environments/example environments/<env>` and edit `inventory/group_vars/dsgrow/`: `vcenters.yml`, `flasharrays.yml`,
    `eda.yml`, `policy.yml`, `lab.yml` (admin credentials, SSH keys, OVA) and, for the demo, `demo.yml`. Copy
-   `inventory/example/group_vars/dsgrow/site.yml.example` to `inventory/<env>/group_vars/dsgrow/site.yml` (gitignored) and put your
+   `environments/example/inventory/group_vars/dsgrow/site.yml.example` to `environments/<env>/inventory/group_vars/dsgrow/site.yml` (gitignored) and put your
    addresses there.
 4. Follow `setup/README.md` in order. Every step has a dry run, a rollback and a read-back.
 
@@ -155,7 +157,7 @@ What the environment must provide. The reference lab (inventory `vcf9-1`, a nest
 - `demo/cleanup.yml`: removes everything init created, each object checked against the recorded identity.
 
 Run with `bash tools/setup.sh demo/<x>.yml --confirm <x>.yml` on the run host; follow an expansion with
-`python3 tools/demo_follow.py`. The demo's objects and sizes are in `inventory/<env>/group_vars/dsgrow/demo.yml`.
+`python3 tools/demo_follow.py`. The demo's objects and sizes are in `environments/<env>/inventory/group_vars/dsgrow/demo.yml`.
 
 ## Tests
 
@@ -170,7 +172,7 @@ docker compose run --rm -T eda ansible-lint
 ## Working on it with Claude Code
 
 `CLAUDE.md` holds the rules every session follows; `.claude/skills/` holds one short skill per area (rulebook, VCF
-Ops, FlashArray, VMFS, Slack, safety review, lab changes, demo). `docs/history.md` records every lab change with its
+Ops, FlashArray, VMFS, Slack, safety review, lab changes, demo). Each environment's `docs/history.md` records every change made to that lab, with its
 evidence.
 
 ## Prior art

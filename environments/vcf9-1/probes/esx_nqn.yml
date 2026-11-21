@@ -2,19 +2,19 @@
 # READ-ONLY: where the demo hosts' NVMe host NQN can be read through vCenter (nested-vcf's skill flasharray-nvme says
 # the API has none; checked here on vSphere 9): the storage device NVMe topology and the host bus adapters of each
 # demo host, searched for "nqn". Also the FlashArray host objects on the demo array (name, nqn, hgroup).
-#   bash tools/probe.sh inventory/vcf9-1/probes/esx_nqn.yml
+#   bash tools/probe.sh environments/vcf9-1/probes/esx_nqn.yml
 # Output: .state/probes/esx_nqn.json (no secrets).
 - name: ESXi host NQNs and the array's host objects
   hosts: localhost
   gather_facts: false
   vars_files:
     - /work/playbooks/group_vars/all/dsgrow.yml
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/vcenters.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/demo.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/site.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/vcenters.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/flasharrays.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/demo.yml"
     - /work/demo/vars/demo.yml
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/lab.yml"
     - "{{ dsgrow_lab.secrets_file }}"
   module_defaults:
     group/community.vmware.vmware:

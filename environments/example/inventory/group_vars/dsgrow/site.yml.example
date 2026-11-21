@@ -1,5 +1,5 @@
 ---
-# Copy to site.yml next to this file in inventory/<env>/group_vars/dsgrow/ (gitignored) and fill in your
+# Copy to site.yml next to this file in environments/<env>/inventory/group_vars/dsgrow/ (gitignored) and fill in your
 # addresses. Everything else in the inventory refers to these values, so no address lives in git.
 dsgrow_site:
   run_host: 192.0.2.10                  # the host running the dsgrow-eda containers; VCF Ops posts alerts to it

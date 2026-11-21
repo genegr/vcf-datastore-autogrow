@@ -37,7 +37,7 @@ Every FlashArray call goes through `everpure.flasharray.*` modules, never REST v
 Serial = 24 hex digits (upper case on the array):
 ```
 SCSI  naa.624a9370 + serial (lower case)
-NVMe  eui.00 + serial[0:14] + 24a937 + serial[14:24]      (proven on vcf9-1: inventory/vcf9-1/probes/eui_serial.yml)
+NVMe  eui.00 + serial[0:14] + 24a937 + serial[14:24]      (proven on vcf9-1: environments/vcf9-1/probes/eui_serial.yml)
 ```
 Filters `dsgrow_device_to_fa_serial` / `dsgrow_fa_serial_to_device` (`plugins/filter/dsgrow.py`) reject anything
 else. Then `purefa_info` on every array; exactly one match across all arrays (`roles/dsgrow_flasharray/tasks/find_one.yml`).

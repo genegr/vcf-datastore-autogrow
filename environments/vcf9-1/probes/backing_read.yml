@@ -3,7 +3,7 @@
 # workload-domain datastores, as each vCenter's SSO administrator (nested-vcf dsgrow_lab_vc_admin_password, read-only use;
 # the dsgrow service accounts don't exist yet). Proves the module on vCenter 9.1.1 / pyVmomi and shows the extent
 # device IDs (eui.*), the per-host mount state and the device sizes each host sees.
-#   bash tools/probe.sh inventory/vcf9-1/probes/backing_read.yml
+#   bash tools/probe.sh environments/vcf9-1/probes/backing_read.yml
 # Output: .state/probes/backing_read.json (no secrets).
 - name: Datastore backing on the lab vCenters
   hosts: localhost
@@ -15,9 +15,9 @@
       - {vc: w01, datastores: [vcf9-1-w01-ds01, vcf9-1-w01-dr01]}
       - {vc: w02, datastores: [vcf9-1-w02-ds01]}
   vars_files:
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/vcenters.yml"
-    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/site.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/vcenters.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/lab.yml"
     - "{{ dsgrow_lab.secrets_file }}"
   tasks:
     - name: Backing

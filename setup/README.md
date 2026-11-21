@@ -13,7 +13,7 @@ API user per array. Admin credentials (from `lab.yml`) are used only by these se
 
 | # | Step | Changes | Rollback |
 |---|---|---|---|
-| 0 | `.env` from `.env.example` (`DSGROW_ENV`, optional `DSGROW_LAB_DIR`); `inventory/<env>/` from `inventory/example/`; `inventory/<env>/group_vars/dsgrow/site.yml` from `inventory/example/group_vars/dsgrow/site.yml.example`; the admin secrets that `lab.yml` points to; `.state/vault-pass` (random, mode 0600) | files on the run host | delete them |
+| 0 | `.env` from `.env.example` (`DSGROW_ENV`, optional `DSGROW_LAB_DIR`); `environments/<env>/inventory/` from `environments/example/inventory/`; `environments/<env>/inventory/group_vars/dsgrow/site.yml` from `environments/example/inventory/group_vars/dsgrow/site.yml.example`; the admin secrets that `lab.yml` points to; `.state/vault-pass` (random, mode 0600) | files on the run host | delete them |
 | 1 | `setup/secrets_init.yml` | `.state/secrets/eda.yml` (rulebook tokens, HMAC secret) | delete it |
 | 2 | `setup/fa_user.yml` | `dsgrow` storage_admin user + API token on every array in `flasharrays.yml` | delete the user in Purity |
 | 3 | `setup/vcenter_account.yml` (needs `govc` in the image: `DSGROW_IMAGE=<image with govc>`) | SSO user `dsgrow@<sso domain>` (password generated into `.state/secrets/vcenter-<key>.yml`), role `dsgrow` (Host.Config.Storage), permission on the datacenter, per vCenter | remove permission, role, user in the vSphere Client |
@@ -40,4 +40,4 @@ bridge about 150 MB).
 
 Re-run steps 2, 3, 6, 7 and 8. Steps 1, 4 and 5 survive, because they live on the run host and in Slack.
 
-How the reference lab `vcf9-1` was set up, step by step with its evidence: `docs/history.md`.
+How the reference lab `vcf9-1` was set up, step by step with its evidence: `environments/vcf9-1/docs/history.md`.

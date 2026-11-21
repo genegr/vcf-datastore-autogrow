@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Run a READ-ONLY probe (tests/probes/*.yml: general; inventory/<env>/probes/*.yml: one lab's investigations) on the run host, in the dsgrow-eda image (DSGROW_IMAGE to override), with
+# Run a READ-ONLY probe (tests/probes/*.yml: general; environments/<env>/probes/*.yml: one lab's investigations) on the run host, in the dsgrow-eda image (DSGROW_IMAGE to override), with
 # the lab's files read-only at /lab (.env) and dsgrow's own secrets (.state, vault id dsgrow) when present.
 #   cd ~/vsphere-dsgrow && bash tools/probe.sh tests/probes/demo_status.yml [ansible-playbook args]
 # Writes only under ./.state/probes/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-probe=${1:?usage: tools/probe.sh tests/probes/<probe>.yml|inventory/<env>/probes/<probe>.yml [args]}; shift
-case "$probe" in tests/probes/*.yml|inventory/*/probes/*.yml) ;; *) echo "only tests/probes/ or inventory/<env>/probes/" >&2; exit 2 ;; esac
+probe=${1:?usage: tools/probe.sh tests/probes/<probe>.yml|environments/<env>/probes/<probe>.yml [args]}; shift
+case "$probe" in tests/probes/*.yml|environments/*/probes/*.yml) ;; *) echo "only tests/probes/ or environments/<env>/probes/" >&2; exit 2 ;; esac
 source tools/env.sh
 mkdir -p .state/probes .state/home
 exec docker run --rm --network host --user "$(id -u):$(id -g)" \

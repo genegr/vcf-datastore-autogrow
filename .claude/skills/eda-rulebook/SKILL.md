@@ -38,7 +38,7 @@ Pins: ansible-rulebook 1.3.2, `ansible.eda` 2.13.0 (`docker/`).
 - The webhook event is `{"payload": <body>, "meta": {...}}`; the Authorization header is removed before queuing.
   ansible-rulebook adds `meta.source.name`, so a sender can't forge it.
 - `run_playbook` copies only the playbook's directory: policy defaults live in `playbooks/group_vars/all/`, lab
-  values in `inventory/<env>/group_vars/dsgrow/`, roles and plugins via `ANSIBLE_CONFIG=/work/ansible.cfg`. The
+  values in `environments/<env>/inventory/group_vars/dsgrow/`, roles and plugins via `ANSIBLE_CONFIG=/work/ansible.cfg`. The
   playbook gets `ansible_eda.event`, `.rule`, `.ruleset`; pass nothing else.
 - `once_within` must be a literal "<n> <unit>"; keep it equal to `dsgrow_throttle`. Throttle state is in memory:
   a restart (`docker compose restart rulebook`, a run-host change) clears it.

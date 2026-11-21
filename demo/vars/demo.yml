@@ -1,6 +1,6 @@
 ---
-# Derived names for demo/*.yml and setup/template.yml. The objects themselves: inventory/<env>/group_vars/dsgrow/demo.yml;
-# how to reach the lab (admin credentials, SSH keys, OVA): inventory/<env>/group_vars/dsgrow/lab.yml.
+# Derived names for demo/*.yml and setup/template.yml. The objects themselves: environments/<env>/inventory/group_vars/dsgrow/demo.yml;
+# how to reach the lab (admin credentials, SSH keys, OVA): environments/<env>/inventory/group_vars/dsgrow/lab.yml.
 dd: "{{ dsgrow_demo }}"
 dd_vc: "{{ dsgrow_vcenters | selectattr('key', 'equalto', dsgrow_demo.vc_key) | first }}"
 # VM and datastore lifecycle run as the vCenter's SSO administrator (lab.yml credentials); the execute path keeps the
