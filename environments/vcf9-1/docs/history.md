@@ -623,3 +623,7 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   unit 157, offline, rulebook test, lint 0, probes demo_status/fa_identity/ops_read/vcf9-1 eui_serial and dry runs
   of demo/init, setup/vcfops, setup/fa_user all failed=0. The running rulebook still uses the old inventory path until
   it is recreated (gated); the old inventory/ and docs/ stay on the run host until then.
+- Owner: "yes, recreate the rulebook container". `docker compose up -d rulebook` at 11:49 (both locks released, nothing in
+  flight). Read-back: up, command `--inventory environments/vcf9-1/inventory`, 0.0.0.0:5080 and 127.0.0.1:5081
+  listening, "Waiting for events", no errors; the in-memory throttle was cleared. Then the stale copies on the run
+  host (docs/, inventory/; site.yml identical to the new one) removed; demo_status probe failed=0; bridge unchanged.
