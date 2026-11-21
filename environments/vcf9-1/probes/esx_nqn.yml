@@ -1,7 +1,8 @@
 ---
-# READ-ONLY: where the demo hosts' NVMe host NQN can be read through vCenter (nested-vcf's skill flasharray-nvme says
-# the API has none; checked here on vSphere 9): the storage device NVMe topology and the host bus adapters of each
-# demo host, searched for "nqn". Also the FlashArray host objects on the demo array (name, nqn, hgroup).
+# READ-ONLY: where the demo hosts' NVMe host NQN can be read through vCenter. 2026-11-20 this probe searched only the
+# storage device (NVMe topology, host bus adapters) and found only the array's subsystem NQN there; 2026-11-21 the
+# host NQN was found in hardware.systemInfo.qualifiedName (type nvmeQualifiedName, vSphere 7.0 U3+), read here too.
+# Also the FlashArray host objects on the demo array (name, nqn, hgroup).
 #   bash tools/probe.sh environments/vcf9-1/probes/esx_nqn.yml
 # Output: .state/probes/esx_nqn.json (no secrets).
 - name: ESXi host NQNs and the array's host objects
@@ -37,6 +38,7 @@
         properties:
           - config.storageDevice.nvmeTopology
           - config.storageDevice.hostBusAdapter
+          - hardware.systemInfo
       loop: "{{ dd.esx_hosts }}"
       register: pn_hosts
 

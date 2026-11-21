@@ -10,10 +10,7 @@ dsgrow_lab:
   array_secrets_file: /lab/labs/arrays.vault.yml    # FlashArray admin API tokens (setup/fa_user.yml only)
   ops_admin_user: admin
   ops_auth_source: local
-  # SSH: to the ESXi hosts (root, `esxcli nvme info get`, read-only) and to the demo VM, through a jump host.
-  # ECDSA for ESXi: its FIPS-mode sshd refuses ed25519.
-  esx_ssh_user: root
-  esx_ssh_key: /lab/.state/labs/vcf9-1/ssh/esx_ecdsa
+  # SSH to the demo VM goes through the lab router (the ESXi hosts' NQNs come from vCenter, no SSH to them)
   ssh_jump:                                         # null when the run host reaches the lab networks directly
     host: "{{ dsgrow_site.router }}"
     user: vyos

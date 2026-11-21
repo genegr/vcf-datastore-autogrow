@@ -57,8 +57,8 @@ datastore, hosts, array. Lab access (admin credentials, SSH keys, jump host, OVA
 cleanup refuse on any mismatch. A failed init is resumable: rerun init, or clean up.
 
 Where the volume is connected (`demo/tasks/attach_target.yml`, `tests/probes/demo_attach.yml` read-only):
-1. Each host's NVMe NQN via `esxcli nvme info get` over SSH (`lab.yml` key and optional jump host, to the vmk0 IP
-   from vCenter; vCenter has no NQN field). Hosts must be NVMe-oF initiators.
+1. Each host's NVMe NQN from vCenter: `hardware.systemInfo.qualifiedName`, type `nvmeQualifiedName` (vSphere 7.0 U3+;
+   `vmware_host_facts` with `schema: vsphere`). No SSH to ESXi. Hosts must be NVMe-oF initiators.
 2. Exactly one FlashArray host object per NQN.
 3. All in one host group of exactly these hosts: connect to the group (`purefa_hg` with `volume`). None in a group:
    connect each host object. Anything else: refuse. Cleanup disconnects as recorded.

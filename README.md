@@ -127,13 +127,14 @@ What the environment must provide. The reference lab (environment `vcf9-1`, VCF 
 
 **For the demo** (`demo/`), in addition
 
-- A vSphere cluster whose ESXi hosts are **NVMe-oF initiators** of the array (tested NVMe/TCP). The array has one
-  host object per ESXi host carrying its host NQN; if those host objects are in a host group, the group must contain
-  exactly these hosts. SCSI-attached hosts aren't handled by the demo's connect step.
-- **SSH to the ESXi hosts** as root with a key (SSH service on), from the run host directly or through a jump host,
-  to read each host's NQN (`esxcli nvme info get`, read-only).
+- A vSphere cluster (ESXi 7.0 U3 or later) whose hosts are **NVMe-oF initiators** of the array (tested NVMe/TCP).
+  The array has one host object per ESXi host carrying its host NQN; if those host objects are in a host group, the
+  group must contain exactly these hosts. The demo reads each host's NQN from vCenter
+  (`hardware.systemInfo.qualifiedName`), so no SSH to the hosts is needed. SCSI-attached hosts aren't handled by the
+  demo's connect step.
 - An existing datastore for the VM template (never the demo datastore), a port group with a free static IPv4
-  address, its gateway and DNS, reachable over SSH from the run host (directly or through the jump host).
+  address, its gateway and DNS. The run host must reach that address over SSH, directly or through a jump host
+  (`lab.yml`), to finish the VM's setup.
 - The **Ubuntu 26.04 cloud image OVA** (with cloud-init) and its SHA-256, in the directory `lab.yml` names.
 - About 200 GiB of thin provisioned space on the array (the demo writes almost nothing). vSphere HA may be on:
   cleanup moves its heartbeat datastores off the demo datastore and puts them back.

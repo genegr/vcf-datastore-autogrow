@@ -13,11 +13,9 @@ dd_folder: "/{{ dd_vc.datacenter }}/vm/{{ dsgrow_demo.folder }}"
 dd_dir: /work/.state/demo
 dd_state_file: "{{ dd_dir }}/state.json"
 dd_seed_iso: "{{ dsgrow_demo.vm }}-seed.iso"     # at the demo datastore's root, removed with it
-dd_esx_key: "{{ dsgrow_lab.esx_ssh_key }}"
-dd_esx_user: "{{ dsgrow_lab.esx_ssh_user | default('root') }}"
 dd_guest_key: "{{ dd_dir }}/ssh/demo_ed25519"
 dd_ova: "{{ dsgrow_lab.ova_dir }}/{{ dsgrow_demo.ova_file }}"
-# SSH through the lab's jump host when lab.yml names one (ssh_jump), else directly
+# SSH to the demo VM through the lab's jump host when lab.yml names one (ssh_jump), else directly
 dd_jump: "{{ dsgrow_lab.ssh_jump | default(none) }}"
 dd_ssh_proxy: >-
   {{ ('ProxyCommand=ssh -i ' ~ dd_jump.key ~ ' -o BatchMode=yes -o UserKnownHostsFile=/dev/null'

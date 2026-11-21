@@ -8,9 +8,7 @@ dsgrow_lab:
   array_secrets_file: /work/.state/secrets/lab.yml
   ops_admin_user: admin
   ops_auth_source: local
-  esx_ssh_user: root                                # demo: `esxcli nvme info get` on each demo host (read-only)
-  esx_ssh_key: /work/.state/secrets/esx_ssh_key     # its public key in each host's authorized_keys
-  ssh_jump: null                                    # or {host: ..., user: ..., key: ...} to reach the lab networks
+  ssh_jump: null                                    # or {host, user, key}: how the run host reaches the demo VM
   ova_dir: /work/.state/downloads                   # where dsgrow_demo.ova_file is
 
 # The secrets file's variable names, mapped to dsgrow's

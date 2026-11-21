@@ -640,3 +640,11 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   datastore and the 272 GiB volume; ok=63 changed=11 failed=0. Read-back: datastore and volume absent, lock released,
   host group vcf9-1-w02 still exactly esx07-09. The full run on the environments/ layout (init, start, approve,
   execute, cleanup) passed end to end.
+- Host NQN from the vSphere API (owner: "weird there isn't an esxi api call that returns that info"). pyVmomi's type
+  info: HostSystem.hardware.systemInfo.qualifiedName (HostQualifiedName[], type nvmeQualifiedName, vSphere 7.0 U3+).
+  Read through vCenter for esx07-09: exactly the NQNs esxcli gave. The 2026-11-20 probe had searched only
+  config.storageDevice (adapters, nvmeTopology: the array's subnqn). demo/tasks/attach_target.yml now reads it with
+  vmware_host_facts (schema vsphere, properties [hardware.systemInfo]); SSH to ESXi, esx_ssh_user/esx_ssh_key and
+  dd_esx_key/dd_esx_user removed; README demo prerequisites (no ESXi SSH, ESXi 7.0 U3+), dsgrow-demo and
+  vmfs-datastore-expand skills, esx_nqn probe updated. Checked: unit 157, lint, offline, init dry run (same host
+  group decision, NQNs from vCenter), esx_nqn probe failed=0. First real use: the next init.

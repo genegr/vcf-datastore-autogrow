@@ -15,6 +15,9 @@ description: Use for the vCenter side of a datastore expansion - looking up the 
   version and UUID, capacity, free, extents, and per host: mounted, accessible, VMFS capacity, device size.
   `query_expand: true` reports the expand options; the query raises NotFound on a host that doesn't mount it.
 - `plugins/modules/dsgrow_datastore_refresh.py`: `RefreshDatastoreStorageInfo`, datastore-scoped, no host task.
+- A host's NVMe host NQN: `HostSystem.hardware.systemInfo.qualifiedName`, the entry with `type: nvmeQualifiedName`
+  (vSphere 7.0 U3+; `vmware_host_facts` `schema: vsphere`, `properties: [hardware.systemInfo]`). Not under
+  `config.storageDevice`: there `nvmeTopology` only has the array's subsystem NQN (`subnqn`).
 
 ## Lookup (read-only, `roles/dsgrow_resolve`)
 

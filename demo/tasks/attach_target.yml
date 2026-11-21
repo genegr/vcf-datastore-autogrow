@@ -1,8 +1,9 @@
 ---
 # Read-only (also in --check): where the demo volume is connected (owner 2026-11-20):
-#   1. each demo ESXi host's NVMe host NQN, read on the host itself: `esxcli nvme info get` over SSH with the lab's
-#      ESXi key (lab.yml; through its jump host if any). vCenter has no host NQN field. The hosts must be NVMe-oF
-#      initiators (NVMe/TCP or NVMe/FC); SCSI hosts (iSCSI IQN, FC WWN) are not handled.
+#   1. each demo ESXi host's NVMe host NQN, from vCenter: HostSystem hardware.systemInfo.qualifiedName, the entry of
+#      type nvmeQualifiedName (public API since vSphere 7.0 U3; found 2026-11-21, it replaced `esxcli nvme info get`
+#      over SSH). The hosts must be NVMe-oF initiators (NVMe/TCP or NVMe/FC); SCSI hosts (iSCSI IQN, FC WWN) are not
+#      handled.
 #   2. the FlashArray host object that carries that NQN: exactly one per ESXi host
 #   3. all of them in ONE host group whose members are exactly these hosts -> connect the volume to that host group;
 #      none of them in a host group -> connect it to each host object (private connections); anything else (some in
@@ -10,39 +11,25 @@
 #      the demo cluster, or be half-presented
 # Needs dd_hosts and dd_hgroups (tasks/read.yml). Out: dd_attach = {mode: hgroup, hgroup, hosts, nqns} or
 # {mode: hosts, hosts, nqns}.
-# SSH goes to each host's management address (vmk0) as vCenter reports it, so no lab DNS is needed on the path.
-- name: Management address (vmk0) of each demo host, from vCenter
+- name: NVMe host NQN of each demo host, from vCenter (hardware.systemInfo.qualifiedName)
   community.vmware.vmware_host_facts:
     esxi_hostname: "{{ item }}"
+    schema: vsphere
+    properties: [hardware.systemInfo]
   loop: "{{ dd.esx_hosts }}"
   register: da_facts
-  check_mode: false
-
-- name: NVMe host NQN of each demo host (esxcli over SSH, through the jump host if any, read-only)
-  ansible.builtin.command:
-    argv: >-
-      {{ ['ssh', '-i', dd_esx_key, '-o', 'BatchMode=yes', '-o', 'UserKnownHostsFile=/dev/null',
-          '-o', 'StrictHostKeyChecking=no', '-o', 'LogLevel=ERROR', '-o', 'ConnectTimeout=20']
-         + (['-o', dd_ssh_proxy | trim] if dd_ssh_proxy | trim else [])
-         + [dd_esx_user ~ '@' ~ item.ansible_facts.ansible_vmk0.ipv4.address, 'esxcli nvme info get'] }}
-  loop: "{{ da_facts.results }}"
-  loop_control:
-    label: "{{ item.item }} {{ item.ansible_facts.ansible_vmk0.ipv4.address }}"
-  register: da_nqn
-  changed_when: false
-  failed_when: false          # reported below with the host's name
   check_mode: false
 
 - name: Each ESXi host's NQN and its host object on {{ dd.array }}
   ansible.builtin.set_fact:
     da_map: >-
-      {% set out = [] %}{% for r in da_nqn.results %}
-      {%- set m = (r.stdout | default('')) | regex_findall('Host NQN:\s*(\S+)') %}
+      {% set out = [] %}{% for r in da_facts.results %}
+      {%- set qn = ((r.ansible_facts | default({})).hardware | default({})).systemInfo | default({}) %}
+      {%- set m = qn.qualifiedName | default([], true) | selectattr('type', 'equalto', 'nvmeQualifiedName')
+                  | map(attribute='value') | list %}
       {%- set nqn = m[0] if m else '' %}
       {%- set fa = [] %}{% for n, h in dd_hosts.items() %}{% if nqn and nqn in (h.nqn | default([]) or []) %}{% set _ = fa.append(n) %}{% endif %}{% endfor %}
-      {%- set _ = out.append({'esx': r.item.item, 'nqn': nqn, 'rc': r.rc | default(-1),
-                              'err': (r.stderr | default('') | trim | truncate(200)),
-                              'fa_hosts': fa,
+      {%- set _ = out.append({'esx': r.item, 'nqn': nqn, 'fa_hosts': fa,
                               'hgroup': ((dd_hosts[fa[0]].hgroup | default('', true)) if fa | length == 1 else '')}) %}
       {%- endfor %}{{ out }}
 
@@ -50,7 +37,7 @@
   ansible.builtin.set_fact:
     da_problems: >-
       {% set out = [] %}{% for e in da_map %}
-      {%- if not e.nqn %}{% set _ = out.append(e.esx ~ ': no host NQN read (rc ' ~ e.rc ~ ' ' ~ e.err ~ ')') %}
+      {%- if not e.nqn %}{% set _ = out.append(e.esx ~ ': vCenter reports no nvmeQualifiedName (not an NVMe-oF initiator, or older than vSphere 7.0 U3)') %}
       {%- elif e.fa_hosts | length != 1 %}
       {%- set _ = out.append(e.esx ~ ' (' ~ e.nqn ~ ') is carried by ' ~ e.fa_hosts | length ~ ' host objects on ' ~ dd.array ~ ' ' ~ e.fa_hosts) %}{% endif %}
       {%- endfor %}
