@@ -651,3 +651,6 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
 - Init (owner: "initialize the demo", `.state/logs/init-20261121T130318Z.log`): ok=67 changed=13 failed=0, about 2 min 25 s.
   First real run of the NQN read from vCenter (no SSH to ESXi): host group vcf9-1-w02 (exactly esx07-09) chosen as
   before. Read-back: dsgrow-demo01 199.75 GiB at 1.8 %, volume 200 GiB, lock released.
+- Start (owner: "start the demo"): 85.0 % after 37 s. Proposal 13:12:07 (d66138e1-...) 256 / 272 / 288 GiB; click 272 GiB
+  (dsgrow_approve_2); done 13:14:19, 50 s after the click: volume 200 -> 272 GiB, VMFS 199.75 -> 271.75 GiB; expand
+  changed, post-expand refresh skipped, verify ok. Read-back 62.5 % of 271.75 GiB, lock released.
