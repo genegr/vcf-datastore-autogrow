@@ -627,3 +627,7 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   flight). Read-back: up, command `--inventory environments/vcf9-1/inventory`, 0.0.0.0:5080 and 127.0.0.1:5081
   listening, "Waiting for events", no errors; the in-memory throttle was cleared. Then the stale copies on the run
   host (docs/, inventory/; site.yml identical to the new one) removed; demo_status probe failed=0; bridge unchanged.
+- Full run on the environments/ layout. Init (owner: "initialize the demo", `.state/logs/init-20261121T120250Z.log`):
+  ok=68 changed=13 failed=0, about 2 min 35 s; NQNs read on esx07-09 through the jump host (lab.yml ssh_jump), the
+  demo VM reached over SSH with the new dd_ssh_proxy args, cloned from ubuntu-srv-2604-tpl. Read-back:
+  dsgrow-demo01 199.75 GiB at 1.8 %, volume 200 GiB, lock released.
