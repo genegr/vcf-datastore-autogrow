@@ -17,7 +17,10 @@ description: Use for the vCenter side of a datastore expansion - looking up the 
 - `plugins/modules/dsgrow_datastore_refresh.py`: `RefreshDatastoreStorageInfo`, datastore-scoped, no host task.
 - A host's NVMe host NQN: `HostSystem.hardware.systemInfo.qualifiedName`, the entry with `type: nvmeQualifiedName`
   (vSphere 7.0 U3+; `vmware_host_facts` `schema: vsphere`, `properties: [hardware.systemInfo]`). Not under
-  `config.storageDevice`: there `nvmeTopology` only has the array's subsystem NQN (`subnqn`).
+  `config.storageDevice`: there `nvmeTopology` only has the array's subsystem NQN (`subnqn`). The public API has no
+  setter. esxcli is reachable through vCenter without SSH (internal, undocumented; what PowerCLI `Get-EsxCli -V2`
+  uses): `RetrieveManagedMethodExecuter` on the HostSystem, then `ExecuteSoap` with moid `ha-cli-handler-nvme-info`,
+  method `vim.EsxCLI.nvme.info.get` or `.set(hostnqn)` (read on vSphere 9.1, 2026-11-21; setting it is a lab change).
 
 ## Lookup (read-only, `roles/dsgrow_resolve`)
 

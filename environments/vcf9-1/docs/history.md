@@ -656,3 +656,9 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   changed, post-expand refresh skipped, verify ok. Read-back 62.5 % of 271.75 GiB, lock released.
 - Cleanup (owner: "now clean up the environment", `.state/logs/cleanup-20261121T131520Z.log`): ok=63 changed=11 failed=0.
   Read-back: datastore and volume absent, lock released, host group vcf9-1-w02 exactly esx07-09.
+- Read-only probe (owner: "check the remote esxcli path"): esxcli through vCenter's SOAP API, no SSH. Internal methods
+  RetrieveDynamicTypeManager / DynamicTypeMgrQueryMoInstances (45 nvme esxcli handlers per host) and
+  RetrieveManagedMethodExecuter / ExecuteSoap (moid ha-cli-handler-nvme-info, vim.EsxCLI.nvme.info.get): HostNQN of
+  esx07-09 equal to the API and esxcli values. Type info of vim.EsxCLI.nvme.info: methods get() and set(hostnqn). So the
+  NQN can be set remotely through this internal path (not done; a lab change). Temporary probe files removed. Skill
+  vmfs-datastore-expand and nested-vcf's flasharray-nvme skill note it.
