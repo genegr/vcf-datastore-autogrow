@@ -1,0 +1,14 @@
+---
+# Every vCenter whose datastores dsgrow may grow. A datastore is looked up by name in all of them; exactly one match.
+#   key              stable id: names the secret (dsgrow_secret_vc_password_<key>), the env var and site.yml entries
+#   username         the least-privilege dsgrow SSO user (setup/vcenter_account.yml creates it and its role)
+#   admin_user       optional; the SSO administrator used by setup/ and demo/ (default administrator@<sso domain>)
+#   adapter_instances  what VCF Ops may send for this vCenter (its adapter instance name, short name, IP)
+dsgrow_vcenters:
+  - key: vc01
+    hostname: vcenter01.example.lab
+    datacenter: dc01
+    username: dsgrow@vsphere.local
+    password_env: DSGROW_VC_PASSWORD_VC01
+    validate_certs: true
+    adapter_instances: [vcenter01.example.lab, vcenter01, "{{ dsgrow_site.vcenter_ip.vc01 }}"]

@@ -11,7 +11,7 @@
       validate_certs: "{{ dsgrow_vc.validate_certs | default(true) }}"
 
 # The LUN was resized: HBA rescan AND storage refresh on every mounting host. The refresh is required: on 2026-11-21
-# 09:21 the rescan alone showed the grown device on every host, but vmware_host_datastore auto_expand on esx07 found
+# 09:21 the rescan alone showed the grown device on every host, but vmware_host_datastore auto_expand on the expand host found
 # no space (ok, not changed) and verify failed; the retry at 09:28, after the hosts' storage had been refreshed, grew
 # it (changed). Skill vmfs-datastore-expand "When to rescan".
 - name: Rescan HBAs on every host that mounts {{ dsgrow_datastore_name }}
@@ -75,8 +75,8 @@
     state: present
 
 # The LUN was resized, not attached: no VMFS rescan and no second HBA rescan. A host that doesn't show the grown VMFS
-# yet gets a storage refresh, and only that host (owner 2026-11-21: on 08:58 esx08 and esx09 were refreshed whether or
-# not they needed it; on the 09:28 retry no host lagged and the refresh was skipped). The verify step below still
+# yet gets a storage refresh, and only that host (owner 2026-11-21: on 08:58 the other two hosts were refreshed whether
+# or not they needed it; on the 09:28 retry no host lagged and the refresh was skipped). The verify step below still
 # requires the new capacity on every mounting host
 - name: Read the backing after the expand
   ansible.builtin.include_role:

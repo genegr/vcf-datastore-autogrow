@@ -596,3 +596,19 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   test_no_private_addresses_committed guards it. The owner's name and Slack ID replaced in this file. Local only
   (.gitignore): site.yml, .sync.env, tests/probes/w01_* (nested-vcf w01 investigation). CLAUDE.md 230 -> 82 lines;
   skills rewritten to 40-74 lines each; new skill lab-change-gate; README.md written; .gitattributes keeps LF.
+- Owner: "many files use specific references to the local environment (vcf9-1, w01...). Those should be made
+  general, so that the demo can run in a similar env; the prerequisites should state what the lab env has to be like".
+  Environment from .env (DSGROW_ENV, DSGROW_LAB_DIR, DSGROW_LAB_VAULT_PASS; template .env.example; tools/env.sh passes
+  -e dsgrow_env, compose uses it for the rulebook inventory and ANSIBLE_INVENTORY; ansible.cfg names none). Every
+  vars_files path is inventory/{{ dsgrow_env }}/. New per-env lab.yml: admin secrets files, SSH user/keys, optional
+  jump host, OVA dir, and the mapping of the lab vault's names to dsgrow_lab_vc_admin_password /
+  dsgrow_lab_ops_admin_password / dsgrow_lab_fa_admin_tokens (vcf9-1: nested-vcf mounted at /lab). dd_admin and the
+  vCenter setup take dsgrow_vcenters[].admin_user (default administrator@<sso domain>). demo/retire_demo01.yml removed
+  (one-time, done 2026-11-20; in git history). Lab-only investigation probes moved to inventory/vcf9-1/probes/;
+  general probes read the inventory (dsgrow_vcfops_url, dsgrow_demo). Fixtures and test data use example.lab names.
+  New inventory/example/ (every file commented) and README prerequisites (core + demo). Tests:
+  test_code_is_environment_neutral. Validated read-only on the lab: probes demo_status, fa_identity, ops_dsgrow_objects,
+  ops_read, inventory/vcf9-1/probes/eui_serial (fixed a stale name->key lookup from the 2026-11-20 rename) and esx_nqn;
+  dry runs of demo/init (SSH NQN read through the jump host, attach decision unchanged), setup/template, vcfops,
+  fa_user, vcfops_interval, vcenter_account; rendered guest SSH args; offline, rulebook test, lint clean. Run host:
+  .env created (DSGROW_ENV=vcf9-1); the running rulebook container is unchanged (same inventory).

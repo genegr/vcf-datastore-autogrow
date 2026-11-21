@@ -1,5 +1,5 @@
 ---
-# In: fu_array (an entry of dsgrow_flasharrays), fu_user. Secrets and nested-vcf's token map are named by the
+# In: fu_array (an entry of dsgrow_flasharrays), fu_user. Secrets and the lab's admin token map are named by the
 # array's stable `key` (the alias), never by its Purity `name` (inventory flasharrays.yml).
 - name: "{{ fu_array.name }}: the stored token's variable"
   ansible.builtin.set_fact:
@@ -9,7 +9,7 @@
   everpure.flasharray.purefa_info:
     gather_subset: [admins]
     fa_url: "{{ fu_array.url | regex_replace('^https?://', '') }}"
-    api_token: "{{ vault_array_tokens[fu_array.key] }}"
+    api_token: "{{ dsgrow_lab_fa_admin_tokens[fu_array.key] }}"
     disable_warnings: true
   register: fu_info
   check_mode: false
@@ -40,7 +40,7 @@
     role: storage_admin
     api: true
     fa_url: "{{ fu_array.url | regex_replace('^https?://', '') }}"
-    api_token: "{{ vault_array_tokens[fu_array.key] }}"
+    api_token: "{{ dsgrow_lab_fa_admin_tokens[fu_array.key] }}"
     disable_warnings: true
   register: fu_created
   no_log: true
@@ -86,7 +86,7 @@
   everpure.flasharray.purefa_info:
     gather_subset: [admins]
     fa_url: "{{ fu_array.url | regex_replace('^https?://', '') }}"
-    api_token: "{{ vault_array_tokens[fu_array.key] }}"
+    api_token: "{{ dsgrow_lab_fa_admin_tokens[fu_array.key] }}"
     disable_warnings: true
   register: fu_after
   check_mode: false

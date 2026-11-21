@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Copy the working tree from the workstation (Git Bash) to the run host. Same pattern as nested-vcf tools/sync.sh.
+# Copy the working tree from the workstation (Git Bash) to the run host.
 #   SYNC_HOST=user@run-host [SYNC_DIR=vsphere-dsgrow] bash tools/sync.sh      (or put them in .sync.env)
-# Never copied: .git, .state/ (vault, env file), state/ (request files), .venv. tar never deletes: after removing or
+# Never copied: .git, .state/ (vault, env file), state/ (request files), .env (the run host's own), .venv. tar never deletes: after removing or
 # renaming a file here, delete it on the run host too.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,7 +12,7 @@ SYNC_HOST=${env_host:-${SYNC_HOST-}} SYNC_DIR=${env_dir:-${SYNC_DIR-}} SYNC_SSH_
 SYNC_DIR=${SYNC_DIR:-vsphere-dsgrow}
 # shellcheck disable=SC2086
 tar -C "$ROOT" -czf - \
-  --exclude=./.git --exclude=./.state --exclude=./state --exclude=./.sync.env --exclude=./.venv \
+  --exclude=./.git --exclude=./.state --exclude=./state --exclude=./.sync.env --exclude=./.env --exclude=./.venv \
   --exclude='*/__pycache__' --exclude=./.pytest_cache --exclude=./tests/rulebook/out . \
   | ssh ${SYNC_SSH_OPTS:-} "$SYNC_HOST" "mkdir -p '$SYNC_DIR' && tar -xzf - -C '$SYNC_DIR'"
 echo "synced to $SYNC_HOST:$SYNC_DIR"

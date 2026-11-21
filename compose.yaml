@@ -1,5 +1,5 @@
-# dsgrow on the run host (~/vsphere-dsgrow). Host network: the lab DNS lives in Docker's default bridge range
-# (nested-vcf compose.yaml), VCF Ops posts to <run host>:5080, the bridge reaches the approvals source on loopback.
+# dsgrow on the run host. Host network: a lab DNS may live in Docker's default bridge range, VCF Ops posts to
+# <run host>:5080, the bridge reaches the approvals source on loopback.
 # Secrets: .state/eda.env and .state/bridge.env (mode 0600, rendered by setup/deploy.yml from the dsgrow vault; never
 # committed). The bridge's file holds only Slack and the approvals source; vCenter and array secrets only the eda's.
 #   docker compose up -d rulebook bridge          the demo services
@@ -18,6 +18,7 @@ x-eda: &eda
   environment:
     HOME: /work/.state/home
     ANSIBLE_CONFIG: /work/ansible.cfg
+    ANSIBLE_INVENTORY: /work/inventory/${DSGROW_ENV:?set DSGROW_ENV in .env (see .env.example)}
     DSGROW_STATE_DIR: /work/state
 
 services:
@@ -36,7 +37,7 @@ services:
       - --rulebook
       - rulebooks/datastore_capacity.yml
       - --inventory
-      - inventory/vcf9-1
+      - inventory/${DSGROW_ENV:?set DSGROW_ENV in .env (see .env.example)}
       - --vars
       - rulebooks/vars.yml
       - --env-vars

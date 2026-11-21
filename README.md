@@ -86,42 +86,76 @@ plugins/modules/                   dsgrow_datastore_backing (read-only), dsgrow_
 bridge/                            the Slack bridge and its tests
 slack/manifest.yml                 the Slack app
 vcf-ops/payload-templates/         the three VCF Ops webhook templates
-inventory/<env>/                   vCenters, arrays, policy overrides; addresses in a gitignored site.yml
+inventory/example/                 a template environment; inventory/<env>/ per lab (vcf9-1: the reference lab)
 setup/                             one-time setup, one gated step at a time (setup/README.md)
 demo/                              a self-contained demo: init / start / cleanup
 docker/, compose.yaml              the dsgrow-eda and dsgrow-bridge images and services
 tests/                             unit, bridge, rulebook (fixtures + stub playbooks), offline logic, read-only probes
-tools/                             sync, setup and probe runners, the demo follower
+tools/                             sync, setup and probe runners (.env), the demo follower
 docs/                              the original plan and the history of every lab change
 .claude/skills/                    working notes for Claude Code (one skill per area)
 ```
 
+## Prerequisites
+
+What the environment must provide. The reference lab (inventory `vcf9-1`, a nested VCF 9.1.1 lab) has all of it.
+
+**For the expansion**
+
+- **VCF Operations 9.1** (tested 9.1.1) with a vCenter adapter instance per vCenter and an admin account for its
+  suite-api: `setup/vcfops.yml` creates the symptoms, the alert definition, the Webhook Notification plugin
+  instance, its payload template and the notification rule.
+- **vCenter** (tested VCF 9.1) with the datastores to grow: VMFS 6, each on exactly one extent, backed by one
+  FlashArray volume. An SSO administrator account for `setup/vcenter_account.yml`, which creates the least-privilege
+  `dsgrow` user and role (with `govc`).
+- **Everpure FlashArray** with REST 2.x (tested Purity 6.12, REST 2.59), volumes presented over NVMe-oF (`eui.`
+  devices) or SCSI (`naa.624a9370…`), not in pods. An admin API token for `setup/fa_user.yml`, which creates the
+  `dsgrow` `storage_admin` user.
+- **A Linux run host** with Docker and Compose, about 2 GB of disk for the images. VCF Operations must reach it on
+  TCP 5080 (the webhook); it must reach vCenter, the arrays and VCF Operations on HTTPS, and Slack outbound (Socket
+  Mode needs no inbound access).
+- **A Slack workspace** where you can install an app (`slack/manifest.yml`), a channel for the proposals, and the
+  member IDs of the approvers.
+
+**For the demo** (`demo/`), in addition
+
+- A vSphere cluster whose ESXi hosts are **NVMe-oF initiators** of the array (tested NVMe/TCP). The array has one
+  host object per ESXi host carrying its host NQN; if those host objects are in a host group, the group must contain
+  exactly these hosts. SCSI-attached hosts aren't handled by the demo's connect step.
+- **SSH to the ESXi hosts** as root with a key (SSH service on), from the run host directly or through a jump host,
+  to read each host's NQN (`esxcli nvme info get`, read-only).
+- An existing datastore for the VM template (never the demo datastore), a port group with a free static IPv4
+  address, its gateway and DNS, reachable over SSH from the run host (directly or through the jump host).
+- The **Ubuntu 26.04 cloud image OVA** (with cloud-init) and its SHA-256, in the directory `lab.yml` names.
+- About 200 GiB of thin provisioned space on the array (the demo writes almost nothing). vSphere HA may be on:
+  cleanup moves its heartbeat datastores off the demo datastore and puts them back.
+- Optional: a one-minute VCF Operations collection interval for the demo vCenter (`setup/vcfops_interval.yml`), so
+  the alert comes within about a minute instead of five.
+
 ## Getting started
 
-Prerequisites: VCF Operations with a vCenter adapter, vCenter, one or more FlashArrays serving VMFS datastores, a
-Slack workspace, and a Linux run host with Docker that VCF Operations can reach on port 5080.
-
-1. Copy `inventory/site.example.yml` to `inventory/<env>/group_vars/dsgrow/site.yml` and fill in your addresses;
-   adapt `inventory/<env>/group_vars/dsgrow/` (vCenters, arrays, policy).
-2. Create the secrets as described in `setup/secrets.example.yml` (Ansible Vault under `.state/`, never in git).
-3. Follow `setup/README.md` in order: FlashArray API user, vCenter role and user, Slack app, images and services
-   (`docker compose up -d rulebook bridge`), VCF Operations objects. Every step has a dry run, a rollback and a
-   read-back.
-
-The `vcf9-1` inventory is the author's nested lab and serves as a worked example.
+1. Clone the repo on the run host (or edit on a workstation and copy it with `tools/sync.sh`).
+2. `cp .env.example .env` and set `DSGROW_ENV` to your environment's name; set `DSGROW_LAB_DIR` if the lab's admin
+   vault, SSH keys or OVA live outside the repo (mounted read-only at `/lab`).
+3. `cp -r inventory/example inventory/<env>` and edit `group_vars/dsgrow/`: `vcenters.yml`, `flasharrays.yml`,
+   `eda.yml`, `policy.yml`, `lab.yml` (admin credentials, SSH keys, OVA) and, for the demo, `demo.yml`. Copy
+   `inventory/example/group_vars/dsgrow/site.yml.example` to `inventory/<env>/group_vars/dsgrow/site.yml` (gitignored) and put your
+   addresses there.
+4. Follow `setup/README.md` in order. Every step has a dry run, a rollback and a read-back.
 
 ## Demo
 
 `demo/` builds a disposable environment on the lab and removes it again:
 
 - `demo/init.yml`: a 200 GiB volume and VMFS datastore, connected to the hosts' host group, and an Ubuntu VM.
+  It finds the hosts' FlashArray host objects by their NVMe NQNs.
 - `demo/start.yml`: hot-adds one thick lazy-zeroed disk that takes the datastore to 85 % in seconds.
 - Then the product runs: the alert arrives within about a minute, the proposal reaches Slack, an approver clicks,
   and the expansion completes in under a minute.
 - `demo/cleanup.yml`: removes everything init created, each object checked against the recorded identity.
 
 Run with `bash tools/setup.sh demo/<x>.yml --confirm <x>.yml` on the run host; follow an expansion with
-`python3 tools/demo_follow.py`.
+`python3 tools/demo_follow.py`. The demo's objects and sizes are in `inventory/<env>/group_vars/dsgrow/demo.yml`.
 
 ## Tests
 

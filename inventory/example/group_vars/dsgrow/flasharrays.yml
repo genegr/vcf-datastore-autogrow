@@ -1,0 +1,12 @@
+---
+# Every FlashArray a datastore's volume may live on; a volume serial must match on exactly one.
+#   name   the array's Purity name (shown in Slack and logs)
+#   key    stable id: names the secret (dsgrow_secret_fa_token_<key>), the env var and dsgrow_site.fa_url[<key>]
+#   api_version  a REST 2.x version the array supports
+dsgrow_flasharrays:
+  - name: array-a
+    key: fa-a
+    url: "{{ dsgrow_site.fa_url['fa-a'] }}"
+    api_version: "2.59"
+    token_env: DSGROW_FA_TOKEN_FA_A
+    validate_certs: true

@@ -3,18 +3,19 @@
 # storage_admin token; .state/secrets), against a datastore: the alert check, the vCenter search (no
 # ${ADAPTER_INSTANCE} in VCF Ops 9.1.1), the backing, eui -> serial -> the one volume on the arrays, and the propose
 # preflight with its size options. Nothing is written (no state files, no Slack).
-#   bash tools/probe.sh tests/probes/resolve_read.yml [-e pr_ds=vcf9-1-w02-demo01]
+#   bash tools/probe.sh tests/probes/resolve_read.yml [-e pr_ds=<datastore>]
 - name: Dsgrow resolve + preflight, read-only
   hosts: localhost
   gather_facts: false
   vars_files:
     - /work/playbooks/group_vars/all/dsgrow.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/policy.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/policy.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/demo.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/vcenters.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
   vars:
-    pr_ds: vcf9-1-w02-demo01
+    pr_ds: "{{ dsgrow_demo.datastore }}"
     dsgrow_alert:
       schema: dsgrow.vcfops.v1
       event: new

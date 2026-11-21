@@ -1,0 +1,26 @@
+---
+# How setup/, demo/ and the probes reach this lab's admin credentials and files. The execute path never uses these:
+# it runs with the least-privilege dsgrow accounts. Paths are inside the tool container: /lab is DSGROW_LAB_DIR
+# (.env), /work is the repo.
+#
+# vcf9-1 is built by the nested-vcf repo, which holds its admin vaults, SSH keys and downloads. On the run host:
+#   DSGROW_ENV=vcf9-1  DSGROW_LAB_DIR=/home/ubuntu/nested-vcf  DSGROW_LAB_VAULT_PASS=/lab/.state/vault-pass
+dsgrow_lab:
+  secrets_file: /lab/labs/vcf9-1.vault.yml          # vCenter SSO admin + VCF Ops admin passwords (Ansible Vault)
+  array_secrets_file: /lab/labs/arrays.vault.yml    # FlashArray admin API tokens (setup/fa_user.yml only)
+  ops_admin_user: admin
+  ops_auth_source: local
+  # SSH: to the ESXi hosts (root, `esxcli nvme info get`, read-only) and to the demo VM, through a jump host.
+  # ECDSA for ESXi: its FIPS-mode sshd refuses ed25519.
+  esx_ssh_user: root
+  esx_ssh_key: /lab/.state/labs/vcf9-1/ssh/esx_ecdsa
+  ssh_jump:                                         # null when the run host reaches the lab networks directly
+    host: "{{ dsgrow_site.router }}"
+    user: vyos
+    key: /lab/.state/labs/vcf9-1/ssh/router_ed25519
+  ova_dir: /lab/.state/downloads                    # where dsgrow_demo.ova_file is (setup/template.yml)
+
+# The lab vault's own variable names, mapped to dsgrow's
+dsgrow_lab_vc_admin_password: "{{ vault_sso_admin_password }}"
+dsgrow_lab_ops_admin_password: "{{ vault_vcf_password }}"
+dsgrow_lab_fa_admin_tokens: "{{ vault_array_tokens | default({}) }}"    # {<dsgrow_flasharrays[].key>: token}

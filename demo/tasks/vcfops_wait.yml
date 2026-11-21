@@ -10,7 +10,7 @@
     url: "{{ dsgrow_vcfops_url }}/api/auth/token/acquire"
     method: POST
     body_format: json
-    body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+    body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
     headers: {Accept: application/json}
     validate_certs: false
   register: dv_tok

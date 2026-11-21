@@ -8,25 +8,25 @@
   gather_facts: false
   vars_files:
     - ../../playbooks/group_vars/all/dsgrow.yml
-    - ../../inventory/vcf9-1/group_vars/dsgrow/policy.yml
+    - policy.yml
   vars:
     gib: 1073741824
     dsgrow_rid: 0b5e6f1c-7d2a-4e8b-9c3f-1a2b3c4d5e6f
-    dsgrow_vc: {key: w01, hostname: vcenter-w01.vcf9-1.lab}
+    dsgrow_vc: {key: w01, hostname: vcenter01.example.lab}
     dsgrow_datastore_name: dsgrow-demo01
     dsgrow_device: eui.006c1b16ce1c034d24a9371c0647bcc9
     dsgrow_alert:
       alert_definition: dsgrow - datastore capacity
       criticality: WARNING
-      link: https://ops.vcf9-1.lab/ui/x
+      link: https://ops.example.lab/ui/x
     dsgrow_backing:
       type: VMFS
       vmfs_major_version: 6
       capacity_bytes: "{{ 199 * gib }}"
       used_bytes: "{{ 170 * gib }}"
-      hosts: [{name: esx04.vcf9-1.lab}, {name: esx05.vcf9-1.lab}, {name: esx06.vcf9-1.lab}]
+      hosts: [{name: esx01.example.lab}, {name: esx02.example.lab}, {name: esx03.example.lab}]
     dsgrow_fa_match:
-      array: {name: z-fastaines-d, key: z-x90-a}
+      array: {name: array-a, key: fa-a}
       volume: {name: dsgrow-demo01, provisioned: "{{ 200 * gib }}", destroyed: false, pod: {name: null}}   # as roles/dsgrow_flasharray find_one maps purefa_info
       space: {capacity_bytes: 29509027889152, used_bytes: 10000000000000}
   tasks:
@@ -88,7 +88,7 @@
         name: dsgrow_state
         tasks_from: request_write
       vars:
-        dsgrow_request: {rid: "{{ dsgrow_rid }}", status: proposed, vc: vcenter-w01.vcf9-1.lab, ds: dsgrow-demo01,
+        dsgrow_request: {rid: "{{ dsgrow_rid }}", status: proposed, vc: vcenter01.example.lab, ds: dsgrow-demo01,
                          dev: "{{ dsgrow_device }}", expires: "{{ dsgrow_expires }}", blocks: "{{ dsgrow_slack_blocks }}",
                          slack: {channel: C0DEMO0001, ts: "1763546400.000100"}}
 

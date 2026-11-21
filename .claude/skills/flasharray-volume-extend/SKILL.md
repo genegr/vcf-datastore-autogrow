@@ -14,7 +14,7 @@ Every FlashArray call goes through `everpure.flasharray.*` modules, never REST v
   `purefa_volume` on any existing volume fail with "Module failed." Fixed upstream (commit 333dcca), in no release.
   The dsgrow-eda image applies `docker/patches/everpure-flasharray-1.46.0-issue1103.patch`; the build fails if it
   doesn't apply, and `docker/check_flasharray_patch.py` proves it. Bump the collection with the patch; drop the
-  patch when a release ships the fix. Run playbooks in `dsgrow-eda:1` (nested-vcf's toolbox isn't patched).
+  patch when a release ships the fix. Run playbooks in `dsgrow-eda:1` (other images aren't patched).
 - Arrays: `dsgrow_flasharrays[].name` is the Purity name (shown everywhere); `key` is the stable id that names the
   secret (`dsgrow_secret_fa_token_<key>`), the env var (`token_env`) and the site URL (`dsgrow_site.fa_url[key]`).
 
@@ -37,7 +37,7 @@ Every FlashArray call goes through `everpure.flasharray.*` modules, never REST v
 Serial = 24 hex digits (upper case on the array):
 ```
 SCSI  naa.624a9370 + serial (lower case)
-NVMe  eui.00 + serial[0:14] + 24a937 + serial[14:24]      (proven by tests/probes/eui_serial.yml)
+NVMe  eui.00 + serial[0:14] + 24a937 + serial[14:24]      (proven on vcf9-1: inventory/vcf9-1/probes/eui_serial.yml)
 ```
 Filters `dsgrow_device_to_fa_serial` / `dsgrow_fa_serial_to_device` (`plugins/filter/dsgrow.py`) reject anything
 else. Then `purefa_info` on every array; exactly one match across all arrays (`roles/dsgrow_flasharray/tasks/find_one.yml`).

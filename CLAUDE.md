@@ -5,8 +5,11 @@ ansible-rulebook proposes sizes in Slack; an authorised admin clicks one; the ru
 the volume, rescans, expands the VMFS and reports in the Slack thread. This repo only grows datastores. Shrinking,
 creating, deleting and migrating are out of scope. Architecture, components and setup: `README.md`.
 
-Lab: nested VCF 9.1.1 `vcf9-1` (built by the separate nested-vcf repo, which owns the lab's objects and rules).
-Evidence of every lab change: `docs/history.md`. Original design: `docs/plan.md`.
+Environments: `.env` names one (`DSGROW_ENV`) and `inventory/<env>/` describes it; `inventory/example/` is the template
+and the README lists what a lab must provide. Reference lab: `vcf9-1`, a nested VCF 9.1.1 lab built by the separate
+nested-vcf repo, which owns that lab's objects. Keep code environment-neutral: lab specifics go in `inventory/<env>/`
+(addresses in its gitignored `site.yml`, admin access in `lab.yml`, one-off probes in `probes/`). Evidence of every
+lab change: `docs/history.md`. Original design: `docs/plan.md`.
 
 ## Flow in one breath
 
@@ -59,7 +62,7 @@ Never approve on the owner's behalf. Never touch a request or the lock while an 
 ```bash
 python -m pytest tests/unit bridge/tests          # workstation, pure Python
 bash tools/sync.sh                                # copy to the run host (SYNC_HOST in .sync.env)
-# run host, ~/vsphere-dsgrow
+# run host, in the repo, with .env (DSGROW_ENV, DSGROW_LAB_DIR)
 bash tools/offline.sh                             # syntax + offline logic, no network
 bash tools/probe.sh tests/probes/<probe>.yml      # read-only probes
 bash tools/setup.sh setup/<step>.yml [--confirm <step>.yml]    # gated change (dry run without --confirm)

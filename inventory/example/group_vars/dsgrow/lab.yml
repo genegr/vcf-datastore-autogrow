@@ -1,0 +1,19 @@
+---
+# How setup/, demo/ and the probes reach the lab's admin credentials and files (never the execute path). Paths are
+# inside the tool container: /work is the repo, /lab is DSGROW_LAB_DIR (.env, optional).
+# Simplest: keep the admin secrets in dsgrow's own vault, encrypted with .state/vault-pass:
+#   ansible-vault create --vault-id dsgrow@.state/vault-pass .state/secrets/lab.yml
+dsgrow_lab:
+  secrets_file: /work/.state/secrets/lab.yml        # lab_vc_admin_password, lab_ops_admin_password, lab_fa_admin_tokens
+  array_secrets_file: /work/.state/secrets/lab.yml
+  ops_admin_user: admin
+  ops_auth_source: local
+  esx_ssh_user: root                                # demo: `esxcli nvme info get` on each demo host (read-only)
+  esx_ssh_key: /work/.state/secrets/esx_ssh_key     # its public key in each host's authorized_keys
+  ssh_jump: null                                    # or {host: ..., user: ..., key: ...} to reach the lab networks
+  ova_dir: /work/.state/downloads                   # where dsgrow_demo.ova_file is
+
+# The secrets file's variable names, mapped to dsgrow's
+dsgrow_lab_vc_admin_password: "{{ lab_vc_admin_password }}"
+dsgrow_lab_ops_admin_password: "{{ lab_ops_admin_password }}"
+dsgrow_lab_fa_admin_tokens: "{{ lab_fa_admin_tokens | default({}) }}"    # {<dsgrow_flasharrays[].key>: token}

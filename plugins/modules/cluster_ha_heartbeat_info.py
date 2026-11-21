@@ -1,10 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copied unchanged from nested-vcf plugins/modules/ (2026-11-20) for the demo lifecycle (demo/); keep in sync.
-# Our own module (read-only): no module of the pinned collections reads vSphere HA's heartbeat datastores
-# (ClusterComputeResource.RetrieveDasAdvancedRuntimeInfo; community.vmware 6.3.0 / vmware.vmware 2.10.0 searched
-# 2026-11-20). Why it exists: after the DR demo of 2026-11-10, HA's only heartbeat datastore on w01 is the demo's
-# vcf9-1-dstest01; it may only be removed once HA heartbeats on other datastores (playbooks/w01_dr_repair.yml).
+# Our own module (read-only), used by demo/cleanup.yml: no module of the pinned collections reads vSphere HA's
+# heartbeat datastores (ClusterComputeResource.RetrieveDasAdvancedRuntimeInfo; community.vmware 6.3.0 /
+# vmware.vmware 2.10.0 searched 2026-11-20). A datastore HA heartbeats on can't be removed cleanly.
 
 DOCUMENTATION = r"""
 module: cluster_ha_heartbeat_info

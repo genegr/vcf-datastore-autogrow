@@ -4,7 +4,7 @@
   "alert_definition": "dsgrow - datastore capacity",
   "status": "ACTIVE",
   "criticality": "WARNING",
-  "resource_name": "vcf9-1-w02-ds09",
+  "resource_name": "ds-other09",
   "resource_id": "0e0e0e0e-6666-4c3b-9a71-0d5f2e6b7a06",
   "resource_kind": "Datastore",
   "adapter_kind": "VMWARE",

@@ -1,0 +1,9 @@
+---
+# Where VCF Operations sends alerts: the rulebook's vcfops webhook on the run host (port 5080 must be reachable from
+# the VCF Ops appliance), and the VCF Ops API for setup/vcfops.yml.
+dsgrow_eda_host: "{{ dsgrow_site.run_host }}"
+dsgrow_eda_vcfops_port: 5080
+dsgrow_vcfops_url: https://ops.example.lab/suite-api
+# setup/vcfops_interval.yml: collect the demo vCenter every minute instead of 5 (a demo alert within ~1 minute)
+dsgrow_vcfops_interval_adapter: vcenter01.example.lab
+dsgrow_vcfops_interval_min: 1

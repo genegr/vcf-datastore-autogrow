@@ -1,15 +1,15 @@
 ---
 # READ-ONLY: the Purity identity of each configured FlashArray (inventory flasharrays.yml): array name, model,
-# Purity version, id, management URL. The inventory names (z-x70-a, ...) are aliases; Purity's own names differ
-# (nested-vcf sites/cto.yaml: z-x90-a is z-fastaines-d).
+# Purity version, id, management URL. Check that each inventory `name` is the array's Purity name
+# (the `key` is only an internal id).
 #   bash tools/probe.sh tests/probes/fa_identity.yml
 - name: FlashArray identities
   hosts: localhost
   gather_facts: false
   vars_files:
     - /work/playbooks/group_vars/all/dsgrow.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
   tasks:
     - name: Load the dsgrow secrets
       ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml

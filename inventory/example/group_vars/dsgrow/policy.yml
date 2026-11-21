@@ -1,0 +1,5 @@
+---
+# Overrides of playbooks/group_vars/all/dsgrow.yml for this environment. A demo-sized datastore (200 GiB) needs a
+# small step; the 256 GiB default would round every option to the same size.
+dsgrow_size_step_bytes: 17179869184         # 16 GiB
+dsgrow_time_remaining_days: 30

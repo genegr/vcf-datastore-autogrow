@@ -4,19 +4,20 @@
 # as plugins/filter/dsgrow.py assumes (eui.00 + serial[0:14] + 24a937 + serial[14:24])?
 # Also records the REST versions and which /arrays/space fields the arrays return (total_used / total_physical).
 # Only GETs plus login/logout. Uses nested-vcf's array tokens (read-only use) and its array records.
-#   bash tools/probe.sh tests/probes/eui_serial.yml
+#   bash tools/probe.sh inventory/vcf9-1/probes/eui_serial.yml
 # Output: .state/probes/eui_serial.json (no secrets).
 - name: EUI <-> serial on the lab arrays
   hosts: localhost
   gather_facts: false
   vars:
-    nvcf: /nvcf
+    nvcf: /lab                  # DSGROW_LAB_DIR: the nested-vcf checkout
     pr_records: [array.json, array-w01.json, array-w02.json]
     pr_out: /work/.state/probes
   vars_files:
-    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
-    - "{{ nvcf }}/labs/arrays.vault.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "{{ dsgrow_lab.array_secrets_file }}"
   tasks:
     - name: The array records of nested-vcf
       ansible.builtin.set_fact:

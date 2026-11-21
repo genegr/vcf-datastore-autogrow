@@ -1,6 +1,6 @@
 ---
-# Collections for the dsgrow-eda image. community.vmware / community.general equal to the nested-vcf toolbox (module
-# behaviour read from the 6.3.0 source, skill vmfs-datastore-expand). everpure.flasharray equal to the toolbox; every
+# Collections for the dsgrow-eda image. community.vmware / community.general as measured on the reference lab (module
+# behaviour read from the 6.3.0 source, skill vmfs-datastore-expand). everpure.flasharray 1.46.0: every
 # FlashArray call goes through its modules (owner 2026-11-20), with the issue #1103 fix applied at build
 # (docker/patches/, skill flasharray-volume-extend).
 collections:

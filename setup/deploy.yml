@@ -11,10 +11,10 @@
   gather_facts: false
   vars_files:
     - /work/playbooks/group_vars/all/dsgrow.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/policy.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/policy.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/vcenters.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
   tasks:
     - name: Secrets
       ansible.builtin.include_tasks: tasks/secrets_load.yml

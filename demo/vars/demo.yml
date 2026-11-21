@@ -1,10 +1,11 @@
 ---
-# Derived names for demo/*.yml and setup/template.yml (the objects themselves: inventory/vcf9-1/group_vars/dsgrow/demo.yml).
+# Derived names for demo/*.yml and setup/template.yml. The objects themselves: inventory/<env>/group_vars/dsgrow/demo.yml;
+# how to reach the lab (admin credentials, SSH keys, OVA): inventory/<env>/group_vars/dsgrow/lab.yml.
 dd: "{{ dsgrow_demo }}"
 dd_vc: "{{ dsgrow_vcenters | selectattr('key', 'equalto', dsgrow_demo.vc_key) | first }}"
-# VM and datastore lifecycle run as the domain's SSO administrator (nested-vcf vault, read-only use); the execute path
-# keeps the least-privilege dsgrow accounts.
-dd_admin: "administrator@{{ dd_vc.username.split('@')[1] }}"
+# VM and datastore lifecycle run as the vCenter's SSO administrator (lab.yml credentials); the execute path keeps the
+# least-privilege dsgrow accounts. admin_user per vCenter, default administrator@<the dsgrow user's SSO domain>.
+dd_admin: "{{ dd_vc.admin_user | default('administrator@' ~ dd_vc.username.split('@')[1]) }}"
 dd_fa: "{{ dsgrow_flasharrays | selectattr('name', 'equalto', dsgrow_demo.array) | first }}"
 dsgrow_fa_array: "{{ dd_fa }}"            # dsgrow_fa_token (playbooks/group_vars/all/dsgrow.yml) is this array's
 dd_fa_url: "{{ dd_fa.url | regex_replace('^https?://', '') }}"
@@ -12,9 +13,13 @@ dd_folder: "/{{ dd_vc.datacenter }}/vm/{{ dsgrow_demo.folder }}"
 dd_dir: /work/.state/demo
 dd_state_file: "{{ dd_dir }}/state.json"
 dd_seed_iso: "{{ dsgrow_demo.vm }}-seed.iso"     # at the demo datastore's root, removed with it
-dd_router_key: /nvcf/.state/labs/vcf9-1/ssh/router_ed25519
-# root on the nested ESXi hosts (nested-vcf's, read-only use: `esxcli nvme info get`, tasks/attach_target.yml);
-# ECDSA because ESX's FIPS-mode sshd refuses ed25519 (nested-vcf roles/esx_wait)
-dd_esx_key: /nvcf/.state/labs/vcf9-1/ssh/esx_ecdsa
+dd_esx_key: "{{ dsgrow_lab.esx_ssh_key }}"
+dd_esx_user: "{{ dsgrow_lab.esx_ssh_user | default('root') }}"
 dd_guest_key: "{{ dd_dir }}/ssh/demo_ed25519"
-dd_ova: "/nvcf/.state/downloads/{{ dsgrow_demo.ova_file }}"
+dd_ova: "{{ dsgrow_lab.ova_dir }}/{{ dsgrow_demo.ova_file }}"
+# SSH through the lab's jump host when lab.yml names one (ssh_jump), else directly
+dd_jump: "{{ dsgrow_lab.ssh_jump | default(none) }}"
+dd_ssh_proxy: >-
+  {{ ('ProxyCommand=ssh -i ' ~ dd_jump.key ~ ' -o BatchMode=yes -o UserKnownHostsFile=/dev/null'
+      ~ ' -o StrictHostKeyChecking=no -o LogLevel=ERROR -W %h:%p ' ~ dd_jump.user ~ '@' ~ dd_jump.host)
+     if dd_jump else '' }}

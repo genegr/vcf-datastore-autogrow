@@ -109,8 +109,9 @@ def test_no_self_referencing_variables_multiline():
 def test_demo_never_removes_the_template():
     """Owner 2026-11-20: the Ubuntu template survives every demo reset (no re-deploy, no download). It lives on the
     domain's main datastore, never on the demo datastore that cleanup destroys, and no demo task removes it."""
-    demo = _load(ROOT / "inventory/vcf9-1/group_vars/dsgrow/demo.yml")["dsgrow_demo"]
-    assert demo["template_datastore"] != demo["datastore"]
+    for inv in (ROOT / "inventory").glob("*/group_vars/dsgrow/demo.yml"):
+        demo = _load(inv)["dsgrow_demo"]
+        assert demo["template_datastore"] != demo["datastore"], inv
     for path in _yaml_files("demo"):
         for task in _tasks(_load(path) or []):
             for args in (v for v in task.values() if isinstance(v, dict)):
@@ -317,9 +318,8 @@ TARGET_ARGS = ("name", "uuid", "volume", "vmfs_uuid", "device", "path")
 
 
 def test_demo_removes_only_its_own_objects():
-    """CLAUDE.md rule 8, demo exception: demo/ removes only the inventory's demo objects (dd.*: dsgrow_demo) and,
-    in the one-time retirement, the first demo's (dr_old.*), never a name written in the task, and every VM removal
-    is by the instance UUID init recorded (or read just before), not by name alone."""
+    """CLAUDE.md rule 8, demo exception: demo/ removes only the inventory's demo objects (dd.*: dsgrow_demo), never
+    a name written in the task, and every VM removal is by the instance UUID init recorded, not by name alone."""
     seen = 0
     for path in _yaml_files("demo"):
         for task in _tasks(_load(path) or []):
@@ -338,14 +338,14 @@ def test_demo_removes_only_its_own_objects():
                        for t in (args[k] if isinstance(args[k], list) else [args[k]])]
             assert targets, where
             for t in targets:
-                assert re.fullmatch(r"\{\{ (dd|dr_old|dd_rec|dr_ds|dr_filler)[.\w]* \}\}|\{\{ item \}\}", str(t)), \
+                assert re.fullmatch(r"\{\{ (dd|dd_rec)[.\w]* \}\}|\{\{ item \}\}", str(t)), \
                     "%s targets %r" % (where, t)
             if "{{ item }}" in targets:
                 # the demo's ESXi hosts, or the host objects init recorded it connected the volume to
                 assert str(task.get("loop")) in ("{{ dd.esx_hosts }}", "{{ dd_rec.attach.hosts | default([]) }}"), where
             if mod == "community.vmware.vmware_guest":
                 assert args.get("use_instance_uuid") is True and "uuid" in args and args.get("force") is True, where
-    assert seen >= 10, "the check must see the demo's removals (cleanup and retirement)"
+    assert seen >= 6, "the check must see the demo's removals (cleanup)"
 
 
 # ------------------------------------------------------------------ HBA rescans only where a device changed
@@ -378,7 +378,6 @@ HBA_RESCAN_ALLOWED = {
     ("demo/init.yml", "Rescan the hosts (the new device)"),                         # LUN connected
     ("roles/dsgrow_vmfs/tasks/main.yml", "Rescan HBAs on every host that mounts {{ dsgrow_datastore_name }}"),  # resized
     ("demo/cleanup.yml", "Rescan so the hosts drop the device"),                    # LUN disconnected
-    ("demo/retire_demo01.yml", "Rescan so the hosts drop the device"),              # LUN disconnected
 }
 VMFS_RESCAN_ALLOWED = {("demo/init.yml", "The other hosts mount it (rescan VMFS)")}   # LUN attached
 
@@ -437,3 +436,30 @@ def test_no_private_addresses_committed():
             if PRIVATE_IP.search(line):
                 found.append("%s:%d" % (rel.as_posix(), n))
     assert not found, found
+
+
+# ------------------------------------------------------------------ environment-neutral code (owner 2026-11-21)
+LAB_SPECIFIC = re.compile(r"vcf9-1|/nvcf\b|nested-vcf|z-fastaines|z-x[79]0-a|everpure\.demo")
+NEUTRAL_DIRS = ["playbooks", "roles", "rulebooks", "plugins", "bridge", "demo", "tools", "docker", "slack", "setup/tasks",
+                "vcf-ops", "tests/probes", "tests/fixtures", "tests/offline", "tests/rulebook"]
+
+
+def test_code_is_environment_neutral():
+    """Lab specifics live in inventory/<env>/ (and docs); code, probes and fixtures name no lab, so the demo runs in any
+    environment that meets the README's prerequisites."""
+    found = []
+    files = [ROOT / "compose.yaml", ROOT / "ansible.cfg"] + sorted((ROOT / "setup").glob("*.yml"))
+    for d in NEUTRAL_DIRS:
+        files += [p for p in (ROOT / d).rglob("*") if p.is_file()]
+    for path in files:
+        rel = path.relative_to(ROOT)
+        if SKIP_DIRS & set(rel.parts) or path.name.startswith("w01_") or path.suffix in (".pyc", ".patch"):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            if LAB_SPECIFIC.search(line):
+                found.append("%s:%d: %s" % (rel.as_posix(), n, line.strip()[:80]))
+    assert not found, "\n".join(found)

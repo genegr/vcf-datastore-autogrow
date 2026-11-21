@@ -1,8 +1,8 @@
 ---
-# One array for eui_serial.yml. In: pr_item {key: array name, value: {volume: nguid}}.
+# One array for eui_serial.yml. In: pr_item {key: the array's nested-vcf alias = dsgrow_flasharrays[].key, value: {volume: nguid}}.
 - name: "{{ pr_item.key }}: its entry in the inventory"
   ansible.builtin.set_fact:
-    pr_fa: "{{ dsgrow_flasharrays | selectattr('name', 'equalto', pr_item.key) | first }}"
+    pr_fa: "{{ dsgrow_flasharrays | selectattr('key', 'equalto', pr_item.key) | first }}"
 
 - name: "{{ pr_item.key }}: REST versions"
   ansible.builtin.uri:
@@ -16,7 +16,7 @@
     url: "{{ pr_fa.url }}/api/{{ pr_fa.api_version }}/login"
     method: POST
     headers:
-      api-token: "{{ vault_array_tokens[pr_item.key] }}"
+      api-token: "{{ dsgrow_lab_fa_admin_tokens[pr_item.key] }}"
     validate_certs: false
   register: pr_login
   no_log: true

@@ -1,6 +1,6 @@
 ---
 name: dsgrow-demo
-description: Use when the owner says "initialize the demo", "start the demo" or "now clean up the environment" (or close variants), or asks where the demo is. Maps each phrase to its demo/ playbook, how to run and follow it, what to report, and the demo's rules on lab vcf9-1.
+description: Use when the owner says "initialize the demo", "start the demo" or "now clean up the environment" (or close variants), or asks where the demo is. Maps each phrase to its demo/ playbook, how to run and follow it, what to report, and the demo's rules (environment from .env, reference lab vcf9-1).
 ---
 
 # The dsgrow demo lifecycle
@@ -51,14 +51,14 @@ Expected: proposal ~1-2 min after start, options 256 / 272 / 288 GiB (16 GiB ste
 
 ## Objects and identity
 
-Inventory `dsgrow_demo` (`inventory/vcf9-1/group_vars/dsgrow/demo.yml`): volume and datastore `dsgrow-demo01` on
-z-fastaines-f, VM `dsgrow-demo-vm`, template `ubuntu-srv-2604-tpl` on `vcf9-1-w02-ds01`. Init records what it made in
+Inventory `dsgrow_demo` (`inventory/<env>/group_vars/dsgrow/demo.yml`): volume and datastore, VM, template and its
+datastore, hosts, array. Lab access (admin credentials, SSH keys, jump host, OVA): `lab.yml`. Init records what it made in
 `.state/demo/state.json` (serial, EUI, VMFS UUID, datastore moref + vCenter UUID, VM UUID, `attach`). Start and
 cleanup refuse on any mismatch. A failed init is resumable: rerun init, or clean up.
 
 Where the volume is connected (`demo/tasks/attach_target.yml`, `tests/probes/demo_attach.yml` read-only):
-1. Each host's NVMe NQN via `esxcli nvme info get` over SSH (root, nested-vcf's `esx_ecdsa` key, through the router
-   to the vmk0 IP from vCenter; vCenter has no NQN field and the router's DNS has no lab zone).
+1. Each host's NVMe NQN via `esxcli nvme info get` over SSH (`lab.yml` key and optional jump host, to the vmk0 IP
+   from vCenter; vCenter has no NQN field). Hosts must be NVMe-oF initiators.
 2. Exactly one FlashArray host object per NQN.
 3. All in one host group of exactly these hosts: connect to the group (`purefa_hg` with `volume`). None in a group:
    connect each host object. Anything else: refuse. Cleanup disconnects as recorded.
@@ -69,6 +69,7 @@ Where the volume is connected (`demo/tasks/attach_target.yml`, `tests/probes/dem
   rebuild, rerun `setup/template.yml` (deploys from the OVA already on the run host).
 - `demo/` removes only its own recorded objects (`test_demo_removes_only_its_own_objects`).
 - Start runs no `vmware_host_scanhba`: a VMDK is a file. It refreshes with `dsgrow_datastore_refresh` (no host task).
-- Never change nested-vcf's objects (host group `vcf9-1-w02` itself, `vcf9-1-*` volumes); only add and remove the
-  demo volume's own connection. Accepted: nested-vcf's `wld_array` read-back fails while the demo volume exists.
+- Never change the lab's own objects (host groups, other volumes); only add and remove the demo volume's own
+  connection. On vcf9-1 (built by nested-vcf): accepted that nested-vcf's `wld_array` read-back fails while the demo
+  volume exists.
 - If cleanup can't eradicate (SafeMode), the volume waits in the trash and init refuses. Report it; don't recover it.

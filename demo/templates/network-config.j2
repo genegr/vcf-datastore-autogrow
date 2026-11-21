@@ -1,6 +1,6 @@
-# The demo guest (demo/init.yml), as nested-vcf's lab guests (roles/router_seed templates/guest): one vmxnet3 NIC on
-# the app port group, a static address, the router as gateway and DNS. Matched by name (ens192, the first vmxnet3
-# slot, measured there 2026-11-02).
+# The demo guest (demo/init.yml), cloud-init network config v2: one vmxnet3 NIC on
+# dd.portgroup, a static address (site.yml demo_net), its gateway and DNS. Matched by name (ens192, the first
+# vmxnet3 slot of the Ubuntu cloud image).
 version: 2
 ethernets:
   eth0:

@@ -6,16 +6,18 @@
   hosts: localhost
   gather_facts: false
   vars:
-    pr_api: https://ops.vcf9-1.lab/suite-api/api
+    pr_api: "{{ dsgrow_vcfops_url }}/api"
   vars_files:
-    - /nvcf/labs/vcf9-1.vault.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/eda.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "{{ dsgrow_lab.secrets_file }}"
   tasks:
     - name: Token for the local admin
       ansible.builtin.uri:
         url: "{{ pr_api }}/auth/token/acquire"
         method: POST
         body_format: json
-        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
         validate_certs: false
       register: pr_tok

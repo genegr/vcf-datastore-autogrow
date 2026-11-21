@@ -1,12 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copied unchanged from nested-vcf plugins/modules/ (2026-11-20) for the demo lifecycle (demo/); keep in sync.
-# Our own module: no module of the pinned collections mounts or unmounts an existing VMFS volume by its UUID, or detaches
-# its device (community.vmware 6.3.0 vmware_host_datastore state=present CREATES a VMFS when the datastore is not
-# mounted, and state=absent removes the datastore; vmware.vmware 2.10.0 has nothing for it; searched 2026-11-20). Why it
-# exists: the owner's DR demo of 2026-11-10 unmounted vcf9-1-w01-ds01/dr01 on esx04/esx05 and never mounted them again
-# (vsphere-dsgrow docs/history.md, 2026-11-19/20); the repair (playbooks/w01_dr_repair.yml) needs unmount, mount and,
-# for the demo's leftover vcf9-1-dstest01, detach.
+# Our own module, used by demo/cleanup.yml: no module of the pinned collections mounts or unmounts an existing VMFS
+# volume by its UUID, or detaches its device (community.vmware 6.3.0 vmware_host_datastore state=present CREATES a
+# VMFS when the datastore is not mounted, and state=absent removes the datastore; vmware.vmware 2.10.0 has nothing for
+# it; searched 2026-11-20). Cleanup unmounts and detaches the demo's own volume, identified by its recorded UUID.
 
 DOCUMENTATION = r"""
 module: esx_vmfs_volume

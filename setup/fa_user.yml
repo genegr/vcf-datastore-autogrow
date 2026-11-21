@@ -2,7 +2,7 @@
 # Step 2 (LAB CHANGE, gated): a local user `dsgrow` with role storage_admin and an API token on every array in
 # dsgrow_flasharrays, the token stored once in .state/secrets/fa-<array>.yml (encrypted).
 # Module: everpure.flasharray.purefa_user (the toolbox's 1.46.0; it manages admins, not volumes, so bug #1103 does
-# not apply), authenticated with nested-vcf's array_admin token (read-only use of its vault).
+# not apply), authenticated with the lab's FlashArray admin token (lab.yml: dsgrow_lab_fa_admin_tokens, read-only use).
 # Idempotent: an existing dsgrow user with a stored token is left alone (changed=0); a token is only requested when
 # the secrets file does not exist yet.
 # Rollback (by hand, the owner; this repo never deletes): Purity GUI Settings > Users, delete `dsgrow`; remove
@@ -13,9 +13,10 @@
   hosts: localhost
   gather_facts: false
   vars_files:
-    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
-    - /nvcf/labs/arrays.vault.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "{{ dsgrow_lab.array_secrets_file }}"
   vars:
     fu_user: dsgrow
   tasks:

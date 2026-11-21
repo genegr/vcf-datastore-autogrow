@@ -1,11 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Copied unchanged from nested-vcf plugins/modules/ (2026-11-20) for the demo lifecycle (demo/); keep in sync.
-# Our own module: no module of the pinned collections sets vSphere HA's heartbeat datastore preference
-# (ClusterDasConfigInfo.hBDatastoreCandidatePolicy / heartbeatDatastore; community.vmware 6.3.0 vmware_cluster_ha and
-# vmware.vmware 2.10.0 cluster_ha do not expose it; searched 2026-11-20). Why it exists: after the DR demo of 2026-11-10
-# HA heartbeats only on the demo's vcf9-1-dstest01; before that datastore is removed, HA must prefer the domain's own
-# datastores (playbooks/w01_dr_repair.yml, owner 2026-11-20).
+# Our own module, used by demo/cleanup.yml: no module of the pinned collections sets vSphere HA's heartbeat datastore
+# preference (ClusterDasConfigInfo.hBDatastoreCandidatePolicy / heartbeatDatastore; community.vmware 6.3.0
+# vmware_cluster_ha and vmware.vmware 2.10.0 cluster_ha do not expose it; searched 2026-11-20). Before the demo
+# datastore is removed, HA must heartbeat on other datastores; cleanup puts the setting back afterwards.
 
 DOCUMENTATION = r"""
 module: cluster_ha_heartbeat_pref

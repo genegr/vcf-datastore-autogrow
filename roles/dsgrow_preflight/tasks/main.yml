@@ -15,7 +15,7 @@
   ansible.builtin.assert:
     that:
       - not (dsgrow_fa_match.volume.destroyed | default(false))
-      # REST 2.59 answers pod: {name: null} for a volume outside a pod (read on z-x70-a, 2026-11-19)
+      # REST 2.59 answers pod: {name: null} for a volume outside a pod (read on Purity 6.12, 2026-11-19)
       - (dsgrow_fa_match.volume.pod | default({}, true)).name | default('', true) | length == 0
       - "'::' not in dsgrow_fa_match.volume.name"
     fail_msg: >-

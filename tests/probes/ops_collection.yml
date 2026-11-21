@@ -6,21 +6,23 @@
 #   - the raw samples of capacity|usedSpacePct and diskspace|diskused of the last 90 minutes for the demo datastore
 #     (also when it was removed: its history stays) and the domain's main datastore: the gaps between samples are the
 #     real cadence, and whether usedSpacePct changes at every sample
-# Only GETs plus token acquire / release, as the local admin (nested-vcf vault_vcf_password, read-only use).
+# Only GETs plus token acquire / release, as the VCF Ops admin (lab.yml, read-only use).
 #   bash tools/probe.sh tests/probes/ops_collection.yml
 # Output: .state/probes/ops_collection.json (no secrets).
 - name: VCF Operations collection cadence
   hosts: localhost
   gather_facts: false
   vars:
-    nvcf: /nvcf
-    pr_ops: https://ops.vcf9-1.lab/suite-api
+    pr_ops: "{{ dsgrow_vcfops_url }}"
     pr_out: /work/.state/probes
-    pr_datastores: [dsgrow-demo01, vcf9-1-w02-ds01]
+    pr_datastores: ["{{ dsgrow_demo.datastore }}", "{{ dsgrow_demo.template_datastore }}"]
     pr_stat_keys: [capacity|usedSpacePct, diskspace|diskused]
     pr_minutes: 90
   vars_files:
-    - "{{ nvcf }}/labs/vcf9-1.vault.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/eda.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/demo.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "{{ dsgrow_lab.secrets_file }}"
   tasks:
     - name: The window
       ansible.builtin.set_fact:
@@ -32,7 +34,7 @@
         url: "{{ pr_ops }}/api/auth/token/acquire"
         method: POST
         body_format: json
-        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
         validate_certs: false
       register: pr_tok

@@ -43,7 +43,7 @@ def volume():
         serial="0123456789ABCDEF01234567", space=None, host_encryption_key_status="none", priority=0,
         priority_adjustment=PriorityAdjustment(priority_adjustment_operator="=", priority_adjustment_value=None),
         qos=SimpleNamespace(), promotion_status="promoted", requested_promotion_state="promoted", destroyed=False,
-        context=SimpleNamespace(name="z-x70-a"))
+        context=SimpleNamespace(name="fa-b"))
 
 
 class FakeArray:

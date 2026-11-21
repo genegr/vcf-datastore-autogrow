@@ -31,7 +31,7 @@ BLOCKS = [{"type": "header", "text": {"type": "plain_text", "text": "x"}},
 
 
 def value(**over):
-    v = {"rid": RID, "vc": "vcenter-w01.vcf9-1.lab", "ds": "vcf9-1-w02-demo01",
+    v = {"rid": RID, "vc": "vcenter01.example.lab", "ds": "ds-capacity01",
          "dev": "eui.00361019ecace43d24a93783000120a4", "cur": 512 * GIB, "exp": NOW + 3600, "tgt": 640 * GIB}
     v.update(over)
     return json.dumps({k: x for k, x in v.items() if x is not None})

@@ -212,7 +212,7 @@ def test_request_expired():
 
 
 def test_lock_name():
-    assert f.dsgrow_lock_name("VCenter-W01.vcf9-1.lab", "vcf9-1-w02-demo01") == "vcenter-w01.vcf9-1.lab__vcf9-1-w02-demo01"
+    assert f.dsgrow_lock_name("VCenter01.example.lab", "ds-capacity01") == "vcenter01.example.lab__ds-capacity01"
     assert "/" not in f.dsgrow_lock_name("vc", "a/b c")
 
 

@@ -3,12 +3,12 @@
 - name: "{{ va_vc.hostname }}: identities"
   ansible.builtin.set_fact:
     va_sso_domain: "{{ va_vc.username.split('@')[1] }}"
-    va_admin: "administrator@{{ va_vc.username.split('@')[1] }}"
+    va_admin: "{{ va_vc.admin_user | default('administrator@' ~ va_vc.username.split('@')[1]) }}"
     va_secret_var: "dsgrow_secret_vc_password_{{ va_vc.key }}"
     va_govc_env:
       GOVC_URL: "https://{{ va_vc.hostname }}/sdk"
-      GOVC_USERNAME: "administrator@{{ va_vc.username.split('@')[1] }}"
-      GOVC_PASSWORD: "{{ vault_sso_admin_password }}"
+      GOVC_USERNAME: "{{ va_vc.admin_user | default('administrator@' ~ va_vc.username.split('@')[1]) }}"
+      GOVC_PASSWORD: "{{ dsgrow_lab_vc_admin_password }}"
       GOVC_INSECURE: "1"
       GOVC_PERSIST_SESSION: "false"
   no_log: true
@@ -69,7 +69,7 @@
   community.vmware.vmware_local_role_manager:
     hostname: "{{ va_vc.hostname }}"
     username: "{{ va_admin }}"
-    password: "{{ vault_sso_admin_password }}"
+    password: "{{ dsgrow_lab_vc_admin_password }}"
     validate_certs: false
     local_role_name: "{{ va_role }}"
     local_privilege_ids: "{{ va_privileges }}"
@@ -80,7 +80,7 @@
   community.vmware.vmware_object_role_permission:
     hostname: "{{ va_vc.hostname }}"
     username: "{{ va_admin }}"
-    password: "{{ vault_sso_admin_password }}"
+    password: "{{ dsgrow_lab_vc_admin_password }}"
     validate_certs: false
     role: "{{ va_role }}"
     principal: "{{ va_sso_domain | upper }}\\dsgrow"

@@ -1,22 +1,25 @@
 ---
 # READ-ONLY probe: is the dsgrow alert active on a datastore, and is the alert definition enabled in the policies?
-#   bash tools/probe.sh tests/probes/ops_alert_read.yml [-e pr_ds=vcf9-1-w02-demo01]
+#   bash tools/probe.sh tests/probes/ops_alert_read.yml [-e pr_ds=<datastore>]
 - name: The dsgrow alert state in VCF Operations
   hosts: localhost
   gather_facts: false
   vars:
-    pr_api: https://ops.vcf9-1.lab/suite-api/api
-    pr_ds: vcf9-1-w02-demo01
+    pr_api: "{{ dsgrow_vcfops_url }}/api"
+    pr_ds: "{{ dsgrow_demo.datastore }}"
     pr_out: /work/.state/probes
   vars_files:
-    - /nvcf/labs/vcf9-1.vault.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/eda.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/demo.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "{{ dsgrow_lab.secrets_file }}"
   tasks:
     - name: Token for the local admin
       ansible.builtin.uri:
         url: "{{ pr_api }}/auth/token/acquire"
         method: POST
         body_format: json
-        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
         validate_certs: false
       register: pr_tok

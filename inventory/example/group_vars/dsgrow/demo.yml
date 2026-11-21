@@ -1,0 +1,34 @@
+---
+# The demo's objects (demo/init.yml, start.yml, cleanup.yml). demo/ creates and removes ONLY these, each checked
+# against what init recorded before it is removed. The template is made once by setup/template.yml and never removed.
+dsgrow_demo:
+  vc_key: vc01                                # dsgrow_vcenters[].key
+  cluster: cluster01
+  folder: dsgrow                              # VM folder under /<datacenter>/vm (created if missing)
+  esx_hosts: [esx01.example.lab, esx02.example.lab, esx03.example.lab]   # vCenter names; NVMe-oF initiators
+  # HA heartbeats only on these while cleanup removes the demo datastore (then put back as found)
+  ha_heartbeat_datastores: [ds-main01]
+  # A new volume on this array, connected to the host group of the esx_hosts' host objects (or to each host object
+  # when they are in no host group). The array must have one host object per ESXi host, carrying its NVMe NQN.
+  array: array-a                              # dsgrow_flasharrays[].name
+  volume: dsgrow-demo01
+  datastore: dsgrow-demo01
+  size_gib: 200
+  # The guest: an Ubuntu cloud image OVA (cloud-init, NoCloud seed), deployed once as a template on an existing
+  # datastore, cloned onto the demo datastore by init. Put the OVA in lab.yml's ova_dir.
+  ova_file: ubuntu-26.04-server-cloudimg-amd64-20261016.ova
+  ova_sha256: fb52eeb79c0e71bce675729a7d67f5a0c6691deea04d2b13a524c7e376d74ec1
+  template: ubuntu-srv-2604-tpl
+  template_datastore: ds-main01               # never the demo datastore
+  vm: dsgrow-demo-vm
+  vcpu: 2
+  memory_mb: 4096
+  portgroup: pg-app                           # a port group with a static range, a gateway and DNS
+  ip: "{{ dsgrow_site.demo_net.ip }}"         # addresses: site.yml (not in git)
+  prefix: "{{ dsgrow_site.demo_net.prefix }}"
+  gateway: "{{ dsgrow_site.demo_net.gateway }}"
+  dns: "{{ dsgrow_site.demo_net.dns }}"
+  dns_zone: example.lab
+  ntp: "{{ dsgrow_site.demo_net.ntp }}"
+  data_mount: /data
+  fill_pct: 85                                # start: one thick disk takes the datastore here at once

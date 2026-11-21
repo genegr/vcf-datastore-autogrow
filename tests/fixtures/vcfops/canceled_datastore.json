@@ -5,7 +5,7 @@
   "alert_definition": "dsgrow - datastore capacity",
   "status": "CANCELED",
   "criticality": "WARNING",
-  "resource_name": "vcf9-1-w02-demo01",
+  "resource_name": "ds-capacity01",
   "resource_id": "5f0c9a3e-1111-4c3b-9a71-0d5f2e6b7a01",
   "resource_kind": "Datastore",
   "adapter_kind": "VMWARE",
@@ -13,5 +13,5 @@
   "update_time": "2026-11-19T10:00:00Z",
   "cancel_time": "2026-11-19T11:00:00Z",
   "symptoms": "dsgrow - datastore used >= 80 %",
-  "link": "https://ops.vcf9-1.lab/ui/index.action#/object/5f0c9a3e-1111-4c3b-9a71-0d5f2e6b7a01/alerts-and-symptoms/alerts/a1b2c3d4-0001-4000-8000-000000000001"
+  "link": "https://ops.example.lab/ui/index.action#/object/5f0c9a3e-1111-4c3b-9a71-0d5f2e6b7a01/alerts-and-symptoms/alerts/a1b2c3d4-0001-4000-8000-000000000001"
 }

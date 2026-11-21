@@ -1,0 +1,3 @@
+---
+# The offline test's policy override (vars_files beat play vars): a 16 GiB step, as a demo-sized inventory would set.
+dsgrow_size_step_bytes: 17179869184         # 16 GiB

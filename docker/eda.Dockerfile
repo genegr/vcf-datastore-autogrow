@@ -1,5 +1,5 @@
 # dsgrow-eda: ansible-rulebook (Java for drools) + ansible-core + the collections the playbooks use.
-# Build on the run host with the host network (the lab DNS sits in 172.17/16, see nested-vcf compose.yaml):
+# Build on the run host with the host network (a lab DNS may sit in Docker's default bridge range):
 #   docker build --network host -f docker/eda.Dockerfile -t dsgrow-eda:1 docker
 FROM python:3.12-slim-bookworm
 

@@ -7,17 +7,18 @@
   gather_facts: false
   vars_files:
     - /work/playbooks/group_vars/all/dsgrow.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
-    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/site.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/vcenters.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/flasharrays.yml"
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/demo.yml"
     - /work/demo/vars/demo.yml
-    - /nvcf/labs/vcf9-1.vault.yml
+    - "/work/inventory/{{ dsgrow_env }}/group_vars/dsgrow/lab.yml"
+    - "{{ dsgrow_lab.secrets_file }}"
   module_defaults:
     group/community.vmware.vmware: &dd_vc_args
       hostname: "{{ dd_vc.hostname }}"
       username: "{{ dd_admin }}"
-      password: "{{ vault_sso_admin_password }}"
+      password: "{{ dsgrow_lab_vc_admin_password }}"
       validate_certs: false
     dsgrow_datastore_backing: *dd_vc_args
   tasks:

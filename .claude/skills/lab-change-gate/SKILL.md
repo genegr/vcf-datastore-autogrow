@@ -21,14 +21,15 @@ Steps, owners and rollbacks: `setup/README.md`. Logs: `.state/logs/<playbook>-<U
 - Edit on the Windows workstation. No heredocs or nested quoting there: write files, then copy or sync them.
 - `bash tools/sync.sh` copies the tree to the run host (`SYNC_HOST` from the gitignored `.sync.env`). It never
   deletes: after removing or renaming a file, delete it on the run host too.
-- On the run host, in `~/vsphere-dsgrow`, everything runs in the `dsgrow-eda:1` image:
-  - `bash tools/probe.sh tests/probes/<probe>.yml`: read-only probes (nested-vcf mounted read-only at `/nvcf`).
+- On the run host, in the repo, everything runs in the `dsgrow-eda:1` image. `.env` names the environment
+  (`DSGROW_ENV` → `inventory/<env>/`, passed as `dsgrow_env`) and the optional lab directory mounted at `/lab`:
+  - `bash tools/probe.sh tests/probes/<probe>.yml`: read-only probes; `inventory/<env>/probes/` holds one lab's own investigations.
   - `bash tools/offline.sh`: syntax and `tests/offline/logic.yml`, no network.
   - `docker compose run --rm -T eda ansible-lint [paths]`.
   - Services: `docker compose up -d rulebook bridge`. The rulebook mounts the repo (playbook changes apply on sync;
     rulebook changes need a restart). The bridge bakes its code into the image (rebuild after changes).
 - Secrets: `.state/` (vault, env files, `vault-pass`), never in git. Addresses: the gitignored
-  `inventory/<env>/group_vars/dsgrow/site.yml` (`dsgrow_site`; template `inventory/site.example.yml`).
+  `inventory/<env>/group_vars/dsgrow/site.yml` (`dsgrow_site`; template `inventory/example/group_vars/dsgrow/site.yml.example`).
 
 ## Rules
 
@@ -36,5 +37,5 @@ Steps, owners and rollbacks: `setup/README.md`. Logs: `.state/logs/<playbook>-<U
 - A restart or rebuild of a service is a run-host change: check nothing is in flight first (the lock file in
   `state/locks/`).
 - After a failed run: report, wait. No manual fixes on the lab, no retries with changed parameters.
-- nested-vcf (the lab's own repo) owns the lab objects; dsgrow changes only its own accounts, VCF Ops objects and
-  the demo's objects.
+- The lab's own objects belong to whoever built it (vcf9-1: the nested-vcf repo); dsgrow changes only its own
+  accounts, VCF Ops objects and the demo's objects.
