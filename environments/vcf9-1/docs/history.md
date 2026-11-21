@@ -631,3 +631,8 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   ok=68 changed=13 failed=0, about 2 min 35 s; NQNs read on esx07-09 through the jump host (lab.yml ssh_jump), the
   demo VM reached over SSH with the new dd_ssh_proxy args, cloned from ubuntu-srv-2604-tpl. Read-back:
   dsgrow-demo01 199.75 GiB at 1.8 %, volume 200 GiB, lock released.
+- Start (owner: "start the demo", `.state/logs/start-20261121T120741Z.log`): 85.0 % after 38 s, 161.94 GiB disk; first lab run of
+  dsgrow_datastore_refresh (before measuring and after the disk, both ok first try, no host task). Proposal 12:09:06
+  (7a7369a8-...): 256 / 272 / 288 GiB. Click 12:09:51 "button dsgrow_approve_2 'Grow to 272 GiB (→ 62.4%)'".
+  Execute: HBA rescan + refresh on esx07-09, expand on esx07 changed, the conditional post-expand refresh skipped (no
+  host lagged), verify ok. Read-back: volume 272 GiB, dsgrow-demo01 62.5 % of 271.75 GiB, lock released.
