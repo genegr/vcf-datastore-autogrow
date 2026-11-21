@@ -636,3 +636,7 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   (7a7369a8-...): 256 / 272 / 288 GiB. Click 12:09:51 "button dsgrow_approve_2 'Grow to 272 GiB (→ 62.4%)'".
   Execute: HBA rescan + refresh on esx07-09, expand on esx07 changed, the conditional post-expand refresh skipped (no
   host lagged), verify ok. Read-back: volume 272 GiB, dsgrow-demo01 62.5 % of 271.75 GiB, lock released.
+- Cleanup (owner: "now clean up the environment", `.state/logs/cleanup-20261121T121215Z.log`): removed dsgrow-demo-vm, the
+  datastore and the 272 GiB volume; ok=63 changed=11 failed=0. Read-back: datastore and volume absent, lock released,
+  host group vcf9-1-w02 still exactly esx07-09. The full run on the environments/ layout (init, start, approve,
+  execute, cleanup) passed end to end.
