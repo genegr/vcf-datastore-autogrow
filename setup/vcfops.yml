@@ -1,0 +1,550 @@
+---
+# Step 5 (LAB CHANGE, gated): the VCF Operations side of the demo, through the suite-api, re-applied after every
+# 90-day rebuild of the lab. Shapes and endpoints: tests/probes/ops_read.yml, ops_api_docs.yml (skill vcf-ops-webhook).
+#   symptoms   "dsgrow - datastore used >= 80 %"           capacity|usedSpacePct GT_EQ 80
+#              "dsgrow - datastore time remaining under N days"   OnlineCapacityAnalytics|timeRemaining LT N
+#   alert      "dsgrow - datastore capacity" on VMWARE/Datastore, either symptom (OR), wait/cancel 1 cycle
+#   outbound   WebhookPlugin instance "dsgrow-eda" -> http://<run host>:5080, enabled
+#   template   "dsgrow.vcfops.v1": new / updated / canceled payloads (vcf-ops/payload-templates/), Bearer token
+#   rule       "dsgrow - datastore capacity -> EDA": that alert definition, statuses NEW ACTIVE UPDATED CANCELED
+# Create-only by name: an object that exists is left as it is and compared (a difference is reported, never
+# overwritten; change it by hand or delete it in the UI and rerun). Rerun: changed=0.
+# Rollback (by hand, the UI): delete the rule, the template, the outbound instance, the alert, the two symptoms.
+#   bash tools/setup.sh setup/vcfops.yml [--confirm vcfops.yml]
+- name: VCF Operations objects for dsgrow
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/eda.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/policy.yml
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  vars:
+    vo_api: "{{ dsgrow_vcfops_url }}/api"
+    # Plain names only: VCF Ops stores names HTML-escaped (">=" read back as "&gt;="), which defeated the
+    # create-if-missing check and created 7 copies on 2026-11-20 (removed by setup/vcfops_cleanup.yml)
+    vo_symptom_used: "dsgrow - datastore used 80 pct or more"
+    vo_symptom_time: "dsgrow - datastore time remaining under {{ dsgrow_time_remaining_days }} days"
+    # The time-remaining symptom is OFF until its condition is known: POST with key OnlineCapacityAnalytics|timeRemaining
+    # (the only time-remaining key with values on the lab's datastores) answers "HTTP 500 Internal Server error, cause
+    # unknown" (2026-11-20), while the same body with capacity|usedSpacePct works. Turn on with
+    # -e dsgrow_vcfops_time_symptom=true once the shape is known (e.g. from a symptom made once in the UI and read back).
+    dsgrow_vcfops_time_symptom: false
+    vo_symptoms: >-
+      {{ [{'name': vo_symptom_used, 'key': 'capacity|usedSpacePct', 'operator': 'GT_EQ', 'value': '80'}]
+         + ([{'name': vo_symptom_time, 'key': 'OnlineCapacityAnalytics|timeRemaining', 'operator': 'LT',
+              'value': dsgrow_time_remaining_days | string}] if dsgrow_vcfops_time_symptom | bool else []) }}
+    vo_alert: "{{ dsgrow_alert_definitions[0] }}"
+    vo_plugin: dsgrow-eda
+    vo_template: dsgrow.vcfops.v1
+    vo_rule: "dsgrow - datastore capacity to EDA"
+  tasks:
+    - name: Every object name is plain (VCF Ops HTML-escapes the rest, and the name match would never hit)
+      ansible.builtin.assert:
+        that: item is match('^[A-Za-z0-9 ._-]+$')
+        fail_msg: "VCF Ops object name {{ item }} has characters VCF Ops escapes"
+        quiet: true
+      loop: "{{ (vo_symptoms | map(attribute='name') | list) + [vo_alert, vo_plugin, vo_template, vo_rule] }}"
+
+    - name: Secrets
+      ansible.builtin.include_tasks: tasks/secrets_load.yml
+
+    - name: The rulebook token is stored (setup/secrets_init.yml)
+      ansible.builtin.assert:
+        that: dsgrow_secret_eda_vcfops_token | default('') | length > 0
+        fail_msg: run setup/secrets_init.yml first
+        quiet: true
+
+    - name: Token for the local admin
+      ansible.builtin.uri:
+        url: "{{ vo_api }}/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: vo_tok
+      check_mode: false
+      no_log: true
+
+    - name: Create, then always release the token
+      block:
+        - name: Session headers
+          ansible.builtin.set_fact:
+            vo_h: {Authorization: "OpsToken {{ vo_tok.json.token }}", Accept: application/json}
+          no_log: true
+
+        # ---------------------------------------------------------------- symptoms
+        - name: Symptom definitions on Datastore (read)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/symptomdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_sd
+          check_mode: false
+          no_log: true
+
+        - name: Create the missing symptoms
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/symptomdefinitions"
+            method: POST
+            headers: "{{ vo_h }}"
+            body_format: json
+            body:
+              id: null
+              name: "{{ item.name }}"
+              adapterKindKey: VMWARE
+              resourceKindKey: Datastore
+              waitCycles: 1
+              cancelCycles: 1
+              state:
+                severity: WARNING
+                condition: {type: CONDITION_HT, key: "{{ item.key }}", operator: "{{ item.operator }}",
+                            value: "{{ item.value }}", valueType: NUMERIC, instanced: false, thresholdType: STATIC}
+            validate_certs: false
+            status_code: [200, 201]
+          loop: "{{ vo_symptoms }}"
+          loop_control:
+            label: "{{ item.name }}"
+          when: item.name not in (vo_sd.json.symptomDefinitions | map(attribute='name'))
+          register: vo_sd_new
+          changed_when: true
+          failed_when: false        # no_log hides the result (the token is in the headers); the next task reports
+          no_log: true
+
+        - name: Check the symptom creation (status and VCF Ops' message only)
+          ansible.builtin.assert:
+            that: item.status | default(0) in [200, 201]
+            fail_msg: "{{ item.item.name }}: HTTP {{ item.status | default('?') }} {{ (item.json | default({})).message | default(item.msg | default('')) | string | truncate(500) }}"
+            quiet: true
+          loop: "{{ vo_sd_new.results | rejectattr('skipped', 'defined') | list }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+
+        - name: Symptom definitions (read back)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/symptomdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_sd
+          check_mode: false
+          no_log: true
+
+        - name: Symptom ids
+          ansible.builtin.set_fact:
+            vo_sym_ids: >-
+              {{ vo_sd.json.symptomDefinitions | selectattr('name', 'in', vo_symptoms | map(attribute='name') | list)
+                 | map(attribute='id') | list }}
+            vo_sym_conditions: >-
+              {{ vo_sd.json.symptomDefinitions | selectattr('name', 'in', vo_symptoms | map(attribute='name') | list)
+                 | map(attribute='state.condition') | map('community.general.json_query', '{key: key, operator: operator, value: value}') | list }}
+
+        # ---------------------------------------------------------------- alert definition
+        - name: Alert definitions on Datastore (read)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_ad
+          check_mode: false
+          no_log: true
+
+        - name: Create the alert definition
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertdefinitions"
+            method: POST
+            headers: "{{ vo_h }}"
+            body_format: json
+            body:
+              id: null
+              name: "{{ vo_alert }}"
+              description: >-
+                dsgrow: the datastore is filling up (used >= 80 % or less than {{ dsgrow_time_remaining_days }} days
+                remaining). Notifies Event-Driven Ansible, which proposes a FlashArray-backed expansion in Slack.
+              adapterKindKey: VMWARE
+              resourceKindKey: Datastore
+              type: 18
+              subType: 20
+              waitCycles: 1
+              cancelCycles: 1
+              states:
+                - severity: AUTO
+                  impact: {impactType: BADGE, detail: risk}
+                  base-symptom-set:
+                    type: SYMPTOM_SET
+                    relation: SELF
+                    symptomSetOperator: OR
+                    symptomDefinitionIds: "{{ vo_sym_ids }}"
+            validate_certs: false
+            status_code: [200, 201]
+          when:
+            - vo_alert not in (vo_ad.json.alertDefinitions | map(attribute='name'))
+            - not ansible_check_mode
+          changed_when: true
+          register: vo_ad_new
+          failed_when: false   # no_log hides the result; checked next
+          no_log: true
+
+        - name: Check - Create the alert definition
+          ansible.builtin.assert:
+            that: vo_ad_new.status | default(0) in [200, 201]
+            fail_msg: >-
+              Create the alert definition: HTTP
+              {{ vo_ad_new.status | default('?') }}
+              {{ (vo_ad_new.json | default({})).message | default(vo_ad_new.msg | default('')) | string | truncate(800) }}
+              {{ (vo_ad_new.json | default({})).validationFailures | default([]) | to_json | truncate(800) }}
+            quiet: true
+          when: vo_ad_new is not skipped
+
+        # ---------------------------------------------------------------- enable the alert in the active policies
+        # An alert definition created through the API is enabled in no policy (2026-11-20: 85 % used, no symptom, no
+        # alert). PUT /api/alertdefinitions/{id}/enable?policyId=... (appliance REST docs); the API reads no
+        # resource's effective policy, so every active policy (priority ones and the default) gets it. There is no
+        # read of the enablement either: .state/vcfops-alert-enabled.json records what was enabled (rerun: changed=0).
+        - name: The alert definition (read back)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_ad
+          check_mode: false
+          no_log: true
+
+        - name: The active policies
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/policies?activesOnly=true"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_pols
+          check_mode: false
+          no_log: true
+
+        - name: What to enable, and what was enabled before
+          ansible.builtin.set_fact:
+            vo_enable_want:
+              alert: "{{ (vo_ad.json.alertDefinitions | selectattr('name', 'equalto', vo_alert) | first | default({})).id | default('') }}"
+              policies: "{{ vo_pols.json.policySummaries | map(attribute='id') | sort | list }}"
+              policy_names: "{{ vo_pols.json.policySummaries | sort(attribute='id') | map(attribute='name') | list }}"
+            vo_enable_have: "{{ lookup('ansible.builtin.file', '/work/.state/vcfops-alert-enabled.json', errors='ignore') | default('{}', true) | from_json }}"
+
+        - name: Enable the alert definition in every active policy
+          ansible.builtin.uri:
+            url: >-
+              {{ vo_api }}/alertdefinitions/{{ vo_enable_want.alert | urlencode }}/enable?{{
+              vo_enable_want.policies | map('regex_replace', '^', 'policyId=') | join('&') }}
+            method: PUT
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_en
+          changed_when: true
+          failed_when: false   # no_log hides the result; checked next
+          when:
+            - vo_enable_want.alert | length > 0
+            - vo_enable_want != vo_enable_have
+            - not ansible_check_mode
+          no_log: true
+
+        - name: Check - enable the alert definition
+          ansible.builtin.assert:
+            that: vo_en.status | default(0) in [200, 204]
+            fail_msg: "enable in policies: HTTP {{ vo_en.status | default('?') }} {{ (vo_en.json | default({})).message | default(vo_en.msg | default('')) | string | truncate(800) }}"
+            success_msg: "{{ vo_alert }} enabled in {{ vo_enable_want.policy_names }}"
+          when: vo_en is not skipped
+
+        - name: Record what is enabled
+          ansible.builtin.copy:
+            content: "{{ vo_enable_want | to_nice_json(indent=2) }}\n"
+            dest: /work/.state/vcfops-alert-enabled.json
+            mode: "0600"
+          when: vo_en is not skipped
+
+        # ---------------------------------------------------------------- outbound instance
+
+        - name: Outbound instances (read)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertplugins"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_pl
+          check_mode: false
+          no_log: true
+
+        - name: Create the webhook outbound instance
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertplugins"
+            method: POST
+            headers: "{{ vo_h }}"
+            body_format: json
+            body:
+              pluginTypeId: WebhookPlugin
+              name: "{{ vo_plugin }}"
+              description: dsgrow - ansible-rulebook vcfops source on the run host
+              configValues:
+                - {name: Url, value: "http://{{ dsgrow_eda_host }}:{{ dsgrow_eda_vcfops_port }}"}
+                - {name: ConnectionTimeoutInSeconds, value: "30"}
+            validate_certs: false
+            status_code: [200, 201]
+          when:
+            - vo_plugin not in (vo_pl.json.notificationPluginInstances | map(attribute='name'))
+            - not ansible_check_mode
+          changed_when: true
+          register: vo_pl_new
+          failed_when: false   # no_log hides the result; checked next
+          no_log: true
+
+
+        - name: Check - Create the webhook outbound instance
+          ansible.builtin.assert:
+            that: vo_pl_new.status | default(0) in [200, 201]
+            fail_msg: >-
+              Create the webhook outbound instance: HTTP
+              {{ vo_pl_new.status | default('?') }}
+              {{ (vo_pl_new.json | default({})).message | default(vo_pl_new.msg | default('')) | string | truncate(800) }}
+              {{ (vo_pl_new.json | default({})).validationFailures | default([]) | to_json | truncate(800) }}
+            quiet: true
+          when: vo_pl_new is not skipped
+
+        - name: Outbound instances (read back)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertplugins"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_pl
+          check_mode: false
+          no_log: true
+
+        - name: The instance
+          ansible.builtin.set_fact:
+            vo_plugin_obj: "{{ vo_pl.json.notificationPluginInstances | selectattr('name', 'equalto', vo_plugin) | first | default({}) }}"
+
+        - name: Enable it
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertplugins/{{ vo_plugin_obj.pluginId }}/enable/true"
+            method: PUT
+            headers: "{{ vo_h }}"
+            validate_certs: false
+            status_code: [200, 204]
+          when: vo_plugin_obj | length > 0 and not vo_plugin_obj.enabled | default(false) and not ansible_check_mode
+          changed_when: true
+          register: vo_pl_en
+          failed_when: false   # no_log hides the result; checked next
+          no_log: true
+
+        # ---------------------------------------------------------------- payload template
+
+        - name: Check - Enable it
+          ansible.builtin.assert:
+            that: vo_pl_en.status | default(0) in [200, 204]
+            fail_msg: >-
+              Enable it: HTTP
+              {{ vo_pl_en.status | default('?') }}
+              {{ (vo_pl_en.json | default({})).message | default(vo_pl_en.msg | default('')) | string | truncate(800) }}
+              {{ (vo_pl_en.json | default({})).validationFailures | default([]) | to_json | truncate(800) }}
+            quiet: true
+          when: vo_pl_en is not skipped
+
+        - name: Outbound instances (read back after the enable)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertplugins"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_pl
+          check_mode: false
+          no_log: true
+          when: vo_pl_en is not skipped
+
+        - name: The instance as it is now
+          ansible.builtin.set_fact:
+            vo_plugin_obj: "{{ vo_pl.json.notificationPluginInstances | selectattr('name', 'equalto', vo_plugin) | first | default({}) }}"
+          when: vo_pl_en is not skipped
+
+        - name: Payload templates (read)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/notifications/templates"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_tpl
+          check_mode: false
+          no_log: true
+
+        - name: Create the payload template
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/notifications/templates"
+            method: POST
+            headers: "{{ vo_h }}"
+            body_format: json
+            body:
+              templateId: null
+              pluginTypeId: WebhookPlugin
+              templateType: ALERT
+              name: "{{ vo_template }}"
+              description: dsgrow payload contract dsgrow.vcfops.v1 (vsphere-dsgrow vcf-ops/payload-templates)
+              contentConfigs: []
+              formattingTemplate:
+                type: WEBHOOK_TEMPLATE
+                newAlertTemplate: "{{ vo_entry | combine({'payload': vo_payloads.new}) }}"
+                updatedAlertTemplate: "{{ vo_entry | combine({'payload': vo_payloads.updated}) }}"
+                canceledAlertTemplate: "{{ vo_entry | combine({'payload': vo_payloads.canceled}) }}"
+            validate_certs: false
+            status_code: [200, 201]
+          vars:
+            vo_payloads:
+              new: "{{ lookup('ansible.builtin.file', '/work/vcf-ops/payload-templates/new.json') | from_json | to_json }}"
+              updated: "{{ lookup('ansible.builtin.file', '/work/vcf-ops/payload-templates/updated.json') | from_json | to_json }}"
+              canceled: "{{ lookup('ansible.builtin.file', '/work/vcf-ops/payload-templates/canceled.json') | from_json | to_json }}"
+            vo_entry:
+              endpoint: /endpoint
+              method: POST
+              headers:
+                - {key: Content-Type, value: application/json}
+                - {key: Authorization, value: "Bearer {{ dsgrow_secret_eda_vcfops_token }}"}
+          when:
+            - vo_template not in (vo_tpl.json.notificationTemplates | map(attribute='name'))
+            - not ansible_check_mode
+          changed_when: true
+          register: vo_tpl_new
+          failed_when: false   # no_log hides the result; checked next
+          no_log: true
+
+
+        - name: Check - Create the payload template
+          ansible.builtin.assert:
+            that: vo_tpl_new.status | default(0) in [200, 201]
+            fail_msg: >-
+              Create the payload template: HTTP
+              {{ vo_tpl_new.status | default('?') }}
+              {{ (vo_tpl_new.json | default({})).message | default(vo_tpl_new.msg | default('')) | string | truncate(800) }}
+              {{ (vo_tpl_new.json | default({})).validationFailures | default([]) | to_json | truncate(800) }}
+            quiet: true
+          when: vo_tpl_new is not skipped
+
+        - name: Payload templates (read back)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/notifications/templates"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_tpl
+          check_mode: false
+          no_log: true
+
+        # ---------------------------------------------------------------- notification rule
+        - name: Alert definitions (read back)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_ad
+          check_mode: false
+          no_log: true
+
+        - name: Notification rules (read)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/notifications/rules"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_rules
+          check_mode: false
+          no_log: true
+
+        - name: Ids
+          ansible.builtin.set_fact:
+            vo_alert_obj: "{{ vo_ad.json.alertDefinitions | selectattr('name', 'equalto', vo_alert) | first | default({}) }}"
+            vo_tpl_obj: "{{ vo_tpl.json.notificationTemplates | selectattr('name', 'equalto', vo_template) | first | default({}) }}"
+            vo_rule_obj: "{{ vo_rules.json.rules | selectattr('name', 'equalto', vo_rule) | first | default({}) }}"
+
+        - name: Create the notification rule
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/notifications/rules"
+            method: POST
+            headers: "{{ vo_h }}"
+            body_format: json
+            body:
+              id: null
+              name: "{{ vo_rule }}"
+              pluginId: "{{ vo_plugin_obj.pluginId }}"
+              templateId: "{{ vo_tpl_obj.templateId }}"
+              enabled: true
+              ruleType: ALERT
+              alertStatuses: [NEW, ACTIVE, UPDATED, CANCELED]
+              alertControlStates: [OPEN, ASSIGNED]
+              criticalities: [INFORMATION, WARNING, IMMEDIATE, CRITICAL]
+              resourceKindFilter: {resourceKind: Datastore, adapterKind: VMWARE}
+              resourceKindFilters: []
+              resourceFilters: []
+              alertTypeFilters: []
+              alertDefinitionIdFilters: {values: ["{{ vo_alert_obj.id }}"]}
+              sendHeartbeat: false
+            validate_certs: false
+            status_code: [200, 201]
+          when: vo_rule_obj | length == 0 and not ansible_check_mode
+          changed_when: true
+          register: vo_rule_new
+          failed_when: false   # no_log hides the result; checked next
+          no_log: true
+
+
+        - name: Check - Create the notification rule
+          ansible.builtin.assert:
+            that: vo_rule_new.status | default(0) in [200, 201]
+            fail_msg: >-
+              Create the notification rule: HTTP
+              {{ vo_rule_new.status | default('?') }}
+              {{ (vo_rule_new.json | default({})).message | default(vo_rule_new.msg | default('')) | string | truncate(800) }}
+              {{ (vo_rule_new.json | default({})).validationFailures | default([]) | to_json | truncate(800) }}
+            quiet: true
+          when: vo_rule_new is not skipped
+
+        - name: Notification rules (read back)
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/notifications/rules"
+            headers: "{{ vo_h }}"
+            validate_certs: false
+          register: vo_rules
+          check_mode: false
+          no_log: true
+
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ vo_api }}/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ vo_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          check_mode: false
+          when: vo_tok.json.token is defined
+          no_log: true
+
+    - name: Read-back
+      ansible.builtin.set_fact:
+        vo_state:
+          symptoms: "{{ vo_sym_conditions }}"
+          alert: "{{ vo_alert_obj.id | default('MISSING') }}"
+          alert_symptoms: "{{ vo_alert_obj.states[0]['base-symptom-set'].symptomDefinitionIds | default([]) | sort }}"
+          plugin: "{{ vo_plugin_obj | community.general.json_query('{id: pluginId, enabled: enabled, config: configValues}') if vo_plugin_obj else 'MISSING' }}"
+          template: "{{ vo_tpl_obj.templateId | default('MISSING') }}"
+          rule: >-
+            {% set r = vo_rules.json.rules | selectattr('name', 'equalto', vo_rule) | list %}
+            {{- (r[0] | community.general.json_query('{id: id, enabled: enabled, plugin: pluginId, template: templateId, statuses: alertStatuses, alerts: alertDefinitionIdFilters.values}'))
+                if r else 'MISSING' }}
+
+    - name: What VCF Operations has now
+      ansible.builtin.debug:
+        var: vo_state
+
+    - name: Everything is in place and wired together
+      ansible.builtin.assert:
+        that:
+          - vo_state.symptoms | length == vo_symptoms | length
+          - vo_state.alert != 'MISSING'
+          - vo_state.alert_symptoms == (vo_sym_ids | sort)
+          - vo_state.plugin != 'MISSING' and vo_state.plugin.enabled
+          - vo_state.template != 'MISSING'
+          - vo_state.rule != 'MISSING' and vo_state.rule.enabled
+          - vo_state.rule.plugin == vo_plugin_obj.pluginId
+          - vo_state.rule.template == vo_tpl_obj.templateId
+          - vo_state.rule.alerts == [vo_alert_obj.id]
+        fail_msg: "VCF Operations is not fully set up: {{ vo_state }}"
+        quiet: true
+      when: not ansible_check_mode

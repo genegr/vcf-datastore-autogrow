@@ -1,0 +1,217 @@
+---
+# OFFLINE logic test (no network: run with docker --network none). Drives the Jinja-heavy roles with fake inputs:
+# preflight (options + execute caps), the Slack proposal and status blocks, the state files and the lock.
+#   docker run --rm --network none ... ansible-playbook tests/offline/logic.yml   (tools/offline.sh)
+# Writes the rendered proposal to $DSGROW_STATE_DIR/proposal.json for tests/offline/test_proposal.py.
+- name: Dsgrow logic, offline
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../../playbooks/group_vars/all/dsgrow.yml
+    - ../../inventory/vcf9-1/group_vars/dsgrow/policy.yml
+  vars:
+    gib: 1073741824
+    dsgrow_rid: 0b5e6f1c-7d2a-4e8b-9c3f-1a2b3c4d5e6f
+    dsgrow_vc: {key: w01, hostname: vcenter-w01.vcf9-1.lab}
+    dsgrow_datastore_name: dsgrow-demo01
+    dsgrow_device: eui.006c1b16ce1c034d24a9371c0647bcc9
+    dsgrow_alert:
+      alert_definition: dsgrow - datastore capacity
+      criticality: WARNING
+      link: https://ops.vcf9-1.lab/ui/x
+    dsgrow_backing:
+      type: VMFS
+      vmfs_major_version: 6
+      capacity_bytes: "{{ 199 * gib }}"
+      used_bytes: "{{ 170 * gib }}"
+      hosts: [{name: esx04.vcf9-1.lab}, {name: esx05.vcf9-1.lab}, {name: esx06.vcf9-1.lab}]
+    dsgrow_fa_match:
+      array: {name: z-fastaines-d, key: z-x90-a}
+      volume: {name: dsgrow-demo01, provisioned: "{{ 200 * gib }}", destroyed: false, pod: {name: null}}   # as roles/dsgrow_flasharray find_one maps purefa_info
+      space: {capacity_bytes: 29509027889152, used_bytes: 10000000000000}
+  tasks:
+    - name: Preflight, propose
+      ansible.builtin.include_role:
+        name: dsgrow_preflight
+      vars:
+        dsgrow_preflight_mode: propose
+
+    - name: Options are 256, 272 and 288 GiB (the 200 GiB demo datastore at ~85 %, demo step 16 GiB)
+      ansible.builtin.assert:
+        that:
+          - dsgrow_options.options | map(attribute='target_bytes') | list == [256 * gib, 272 * gib, 288 * gib]
+          - dsgrow_used_pct | float > 80
+        fail_msg: "{{ dsgrow_options | to_json }}"
+
+    - name: Expiry
+      ansible.builtin.set_fact:
+        dsgrow_expires: "{{ now(utc=true).timestamp() | int + 4 * 3600 }}"
+        dsgrow_expires_iso: "{{ '%Y-%m-%d %H:%M UTC' | strftime(now(utc=true).timestamp() | int + 4 * 3600, utc=true) }}"
+
+    - name: Proposal blocks
+      ansible.builtin.include_role:
+        name: dsgrow_slack
+        tasks_from: proposal
+
+    - name: Proposal shape
+      ansible.builtin.assert:
+        that:
+          - dsgrow_slack_blocks[0].type == 'header'
+          - dsgrow_slack_blocks | selectattr('type', 'equalto', 'actions') | list | length == 1
+          - (dsgrow_slack_blocks | selectattr('type', 'equalto', 'actions') | first).elements | map(attribute='action_id') | list
+            == ['dsgrow_approve_1', 'dsgrow_approve_2', 'dsgrow_approve_3', 'dsgrow_custom', 'dsgrow_deny']
+          - ((dsgrow_slack_blocks | selectattr('type', 'equalto', 'actions') | first).elements[0].value | from_json).tgt == 256 * gib
+          - dsgrow_slack_blocks | to_json | length < 12000
+        fail_msg: "{{ dsgrow_slack_blocks | to_nice_json }}"
+
+    - name: Save the proposal for the Python cross-check
+      ansible.builtin.copy:
+        content: "{{ dsgrow_slack_blocks | to_nice_json }}"
+        dest: "{{ dsgrow_state_dir }}/proposal.json"
+        mode: "0600"
+
+    - name: No option when every target breaks a cap (512 GiB at 99 %, default 256 GiB step)
+      ansible.builtin.assert:
+        that:
+          - r.options == []
+          - r.refused | length > 0
+      vars:
+        r: "{{ (507 * gib) | dsgrow_size_options(512 * gib, [0.60], dsgrow_policy | combine({'size_step_bytes': 256 * gib}), none) }}"
+
+    - name: State directories
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: dirs
+
+    - name: Write a request
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: request_write
+      vars:
+        dsgrow_request: {rid: "{{ dsgrow_rid }}", status: proposed, vc: vcenter-w01.vcf9-1.lab, ds: dsgrow-demo01,
+                         dev: "{{ dsgrow_device }}", expires: "{{ dsgrow_expires }}", blocks: "{{ dsgrow_slack_blocks }}",
+                         slack: {channel: C0DEMO0001, ts: "1763546400.000100"}}
+
+    - name: Hold the lock
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_write
+      vars:
+        dsgrow_lock_new: {rid: "{{ dsgrow_rid }}", status: proposed, expires: "{{ dsgrow_expires }}"}
+
+    - name: Read the lock
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_read
+
+    - name: Lock is held
+      ansible.builtin.assert:
+        that: dsgrow_lock_held | bool and dsgrow_lock.rid == dsgrow_rid
+
+    - name: Read the request back
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: request_read
+
+    - name: Request round-trips
+      ansible.builtin.assert:
+        that: dsgrow_request.status == 'proposed' and dsgrow_request.blocks | length == dsgrow_slack_blocks | length
+
+    - name: A request id that is not a UUID is refused
+      block:
+        - name: Read ../../etc/passwd
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: request_read
+          vars:
+            dsgrow_rid: ../../etc/passwd
+        - name: Must not get here
+          ansible.builtin.fail:
+            msg: a path was accepted as a request id
+      rescue:
+        - name: Refused as expected
+          ansible.builtin.assert:
+            that: "'not a UUID' in ansible_failed_result.msg"
+
+    - name: Release
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_write
+      vars:
+        dsgrow_lock_new: {rid: "{{ dsgrow_rid }}", status: released, expires: 0}
+
+    - name: Read the lock again
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_read
+
+    - name: Lock is free
+      ansible.builtin.assert:
+        that: not dsgrow_lock_held | bool
+
+    - name: Status blocks drop the buttons and earlier status lines
+      ansible.builtin.include_role:
+        name: dsgrow_slack
+        tasks_from: status
+      vars:
+        dsgrow_slack_status: done
+
+    - name: Status shape
+      ansible.builtin.assert:
+        that:
+          - dsgrow_slack_blocks | selectattr('type', 'equalto', 'actions') | list | length == 0
+          - dsgrow_slack_blocks[-1].block_id == 'dsgrow_status'
+          - dsgrow_slack_blocks | map(attribute='block_id', default='') | select('equalto', 'dsgrow_status') | list | length == 1
+          - dsgrow_slack_blocks | length == dsgrow_request.blocks | length    # actions out, status in
+
+    - name: A message that already has a status line and buttons
+      ansible.builtin.set_fact:
+        lt_request2:
+          blocks: "{{ dsgrow_slack_blocks + [dsgrow_request.blocks | selectattr('type', 'equalto', 'actions') | first] }}"
+
+    - name: A second status replaces the first; keep_actions puts the buttons back
+      ansible.builtin.include_role:
+        name: dsgrow_slack
+        tasks_from: status
+      vars:
+        dsgrow_request: "{{ lt_request2 }}"
+        dsgrow_slack_status: failed, try again
+        dsgrow_slack_keep_actions: true
+
+    - name: One status line, buttons back
+      ansible.builtin.assert:
+        that:
+          - dsgrow_slack_blocks | map(attribute='block_id', default='') | select('equalto', 'dsgrow_status') | list | length == 1
+          - dsgrow_slack_blocks[-1].text.text == 'failed, try again'
+          - dsgrow_slack_blocks | selectattr('type', 'equalto', 'actions') | list | length == 1
+
+    - name: Execute preflight, a good target
+      ansible.builtin.include_role:
+        name: dsgrow_preflight
+      vars:
+        dsgrow_preflight_mode: execute
+        dsgrow_target_bytes: "{{ 272 * gib }}"
+
+    - name: It needs the extend
+      ansible.builtin.assert:
+        that: dsgrow_fa_needs_extend | bool
+
+    - name: Execute preflight, the volume already at target (rerun)
+      ansible.builtin.include_role:
+        name: dsgrow_preflight
+      vars:
+        dsgrow_preflight_mode: execute
+        dsgrow_target_bytes: "{{ 200 * gib }}"
+
+    - name: Nothing to extend, no refusal
+      ansible.builtin.assert:
+        that: not dsgrow_fa_needs_extend | bool
+
+    - name: Execute preflight, over the cap / below the volume / off-step
+      block:
+        - name: "{{ item.what }}"
+          ansible.builtin.include_tasks: refusal.yml
+          loop:
+            - {what: over the 50 % cap, target: "{{ 304 * gib }}", needle: "50%"}
+            - {what: below the volume, target: "{{ 192 * gib }}", needle: "above the approved"}
+            - {what: not on the step, target: "{{ 260 * gib }}", needle: "multiple"}

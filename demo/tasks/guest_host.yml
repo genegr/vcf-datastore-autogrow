@@ -1,0 +1,17 @@
+---
+# The demo guest into the inventory group dsgrow_demo_guest: SSH as ubuntu with the demo's key, through the router
+# (as nested-vcf roles/lab_guest inventory.yml; the router's key is nested-vcf's, read-only use).
+- name: "{{ dd.vm }} in the inventory"
+  ansible.builtin.add_host:
+    name: "{{ dd.vm }}"
+    groups: [dsgrow_demo_guest]
+    ansible_connection: ssh           # tools/setup.sh and probe.sh run with -c local
+    ansible_host: "{{ dd.ip }}"
+    ansible_user: ubuntu
+    ansible_ssh_private_key_file: "{{ dd_guest_key }}"
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_ssh_common_args: >-
+      -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR
+      -o ProxyCommand="ssh -i {{ dd_router_key }} -o BatchMode=yes -o UserKnownHostsFile=/dev/null
+      -o StrictHostKeyChecking=no -o LogLevel=ERROR -W %h:%p vyos@{{ dd.router }}"
+  changed_when: false

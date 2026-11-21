@@ -1,0 +1,21 @@
+# Runtime state on the run host: vault password, vault, env file, request files, logs
+.state/
+state/
+tests/rulebook/out/
+
+# Local settings
+.sync.env
+.env
+*.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# The lab's addresses (public repo: template inventory/site.example.yml)
+inventory/*/group_vars/dsgrow/site.yml
+
+# One-off investigation probes of another project (nested-vcf w01 repair), kept local
+tests/probes/w01_*

@@ -1,0 +1,40 @@
+---
+# The demo lifecycle's objects (demo/init.yml, start.yml, cleanup.yml; skill dsgrow-demo). demo/ creates and removes
+# ONLY these, each identity-checked before it is removed (CLAUDE.md rule 8). The template is made once by
+# setup/template.yml and never removed by the demo.
+dsgrow_demo:
+  vc_key: w02
+  cluster: vcf9-1-w02-cl01
+  folder: dsgrow                              # under /<datacenter>/vm
+  esx_hosts: [esx07.vcf9-1.lab, esx08.vcf9-1.lab, esx09.vcf9-1.lab]   # vCenter names; the first creates the VMFS
+  # HA heartbeats only on these while cleanup removes the demo datastore (then its settings are put back as found)
+  ha_heartbeat_datastores: [vcf9-1-w02-ds01]
+  # FlashArray: a volume outside nested-vcf's vcf9-1-* names. Connected (owner 2026-11-20) to the host group of the
+  # esx_hosts' host objects, found by their NVMe host NQNs (demo/tasks/attach_target.yml), or to each host object
+  # when they are in no host group. With the host group (vcf9-1-w02 on the lab), nested-vcf's wld_array read-back
+  # fails while the demo volume exists (the group must provision exactly its model's sizes): accepted by the owner.
+  array: z-fastaines-f            # dsgrow_flasharrays[].name (key z-x70-a)
+  volume: dsgrow-demo01
+  datastore: dsgrow-demo01
+  size_gib: 200
+  # The guest: Ubuntu 26.04 cloud image (nested-vcf labs/vcf9-1.yaml binaries.vlan_test_ova, its sha256 from the
+  # signed SHA256SUMS), a template on the domain's main datastore, one clone on the demo datastore
+  ova_file: ubuntu-26.04-server-cloudimg-amd64-20261016.ova
+  ova_sha256: fb52eeb79c0e71bce675729a7d67f5a0c6691deea04d2b13a524c7e376d74ec1
+  template: ubuntu-srv-2604-tpl
+  template_datastore: vcf9-1-w02-ds01
+  vm: dsgrow-demo-vm
+  vcpu: 2
+  memory_mb: 4096
+  portgroup: vcf9-1-w02-vds01-pg-app          # the app network; the router is its gateway, DNS and NTP
+  # addresses: site.yml (not in git)
+  ip: "{{ dsgrow_site.demo_net.ip }}"
+  prefix: "{{ dsgrow_site.demo_net.prefix }}"
+  gateway: "{{ dsgrow_site.demo_net.gateway }}"
+  dns: "{{ dsgrow_site.demo_net.dns }}"
+  dns_zone: vcf9-1.lab
+  ntp: "{{ dsgrow_site.demo_net.ntp }}"
+  router: "{{ dsgrow_site.router }}"          # SSH jump to the lab networks (vyos, nested-vcf's key, read-only use)
+  # start: one thick lazy-zeroed disk, sized so the datastore lands at fill_pct at once (allocated, nothing written)
+  data_mount: /data
+  fill_pct: 85

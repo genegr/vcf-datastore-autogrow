@@ -1,0 +1,18 @@
+---
+# Every demo playbook starts here: the dsgrow secrets, the demo's FlashArray token, the local directories.
+- name: Load the dsgrow secrets
+  ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml
+
+- name: The demo's FlashArray token is available ({{ dd.array }})
+  ansible.builtin.assert:
+    that: dsgrow_fa_token | length > 0
+    fail_msg: "no dsgrow API token for {{ dd.array }} (setup/fa_user.yml)"
+    quiet: true
+
+- name: Local demo directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop: ["{{ dd_dir }}", "{{ dd_dir }}/ssh", "{{ dd_dir }}/seed"]
+  check_mode: false

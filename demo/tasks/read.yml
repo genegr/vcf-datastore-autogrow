@@ -1,0 +1,61 @@
+---
+# The demo's objects as they are now (read-only; also in --check). Out:
+#   dd_ds      dsgrow_datastore_backing result for dd.datastore (matches 0 when absent)
+#   dd_vm      the VM's vmware_guest_info instance, {} when absent (dd_has_vm)
+#   dd_vol     purefa_info volumes[dd.volume], {} when absent (dd_has_vol); dd_vol_deleted: it waits in the trash
+#   dd_hosts   purefa_info hosts (connections of every host object, nqn, hgroup)
+#   dd_hgroups purefa_info hgroups (hosts, vols)
+#   dd_rec     .state/demo/state.json (what init created), {} when absent
+- name: Demo datastore {{ dd.datastore }}
+  dsgrow_datastore_backing:
+    datacenter: "{{ dd_vc.datacenter }}"
+    datastore: "{{ dd.datastore }}"
+  register: dd_ds
+  check_mode: false
+
+- name: Demo VM {{ dd.vm }}
+  community.vmware.vmware_guest_info:
+    datacenter: "{{ dd_vc.datacenter }}"
+    name: "{{ dd.vm }}"
+  register: dd_vm_info
+  check_mode: false
+  # only "non-existing VM" means absent; credentials, vCenter or duplicate names fail
+  failed_when: dd_vm_info.instance is not defined and (dd_vm_info.msg | default('')) is not search('non-existing VM')
+
+- name: "{{ dd.array }}: volumes and host connections"
+  everpure.flasharray.purefa_info:
+    gather_subset: [volumes, hosts, hgroups]
+  register: dd_fa_info
+  check_mode: false
+
+- name: What init recorded
+  ansible.builtin.slurp:
+    src: "{{ dd_state_file }}"
+  register: dd_rec_raw
+  failed_when: false
+  check_mode: false
+
+- name: The demo's objects
+  ansible.builtin.set_fact:
+    dd_vm: "{{ dd_vm_info.instance | default({}) }}"
+    dd_has_vm: "{{ dd_vm_info.instance is defined }}"
+    dd_has_vol: "{{ dd.volume in dd_fa_info.purefa_info.volumes }}"
+    dd_vol: "{{ dd_fa_info.purefa_info.volumes.get(dd.volume, {}) }}"
+    dd_vol_deleted: "{{ dd.volume in dd_fa_info.purefa_info.deleted_volumes | default({}) }}"
+    dd_vol_trash: "{{ (dd_fa_info.purefa_info.deleted_volumes | default({})).get(dd.volume, {}) }}"
+    dd_hosts: "{{ dd_fa_info.purefa_info.hosts }}"
+    dd_hgroups: "{{ dd_fa_info.purefa_info.hgroups | default({}) }}"
+    dd_rec: "{{ (dd_rec_raw.content | b64decode | from_json) if dd_rec_raw.content is defined else {} }}"
+
+- name: The demo's objects as read
+  ansible.builtin.debug:
+    msg:
+      volume: >-
+        {{ ('%s serial %s, %s, hosts %s' % (dd.volume, dd_vol.serial, dd_vol.size | dsgrow_human_bytes,
+            dd_vol.hosts | map(attribute='host') | list)) if dd_vol else ('in the trash' if dd_vol_deleted else 'absent') }}
+      datastore: >-
+        {{ ('%s %s, used %s, extent %s, VMs %s' % (dd.datastore, dd_ds.datastore.capacity_bytes | dsgrow_human_bytes,
+            dd_ds.datastore.used_bytes | dsgrow_human_bytes, dd_ds.datastore.extents, dd_ds.datastore.vms))
+           if dd_ds.matches == 1 else (dd_ds.matches ~ ' datastores named ' ~ dd.datastore) }}
+      vm: "{{ (dd.vm ~ ' ' ~ dd_vm.hw_power_status ~ ' on ' ~ dd_vm.hw_esxi_host) if dd_vm else 'absent' }}"
+      record: "{{ dd_rec if dd_rec else 'none' }}"

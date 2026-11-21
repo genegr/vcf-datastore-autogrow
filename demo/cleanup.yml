@@ -1,0 +1,352 @@
+---
+# "now clean up the environment" (skill dsgrow-demo; LAB CHANGE: the owner's phrase is the go-ahead for this run).
+# Removes exactly what demo/init.yml and start.yml made (inventory dsgrow_demo), each checked against
+# .state/demo/state.json first (VM UUID, VMFS UUID, extent EUI, volume serial; CLAUDE.md rule 8, demo exception):
+#   guest    the demo VM, powered off and deleted with its disks (the fill stops with it)
+#   vSphere  HA moved off the datastore, the datastore unmounted and its device detached on every host
+#   array    the volume disconnected as init recorded it (`attach`: from the host group, only this volume, the group
+#            and its hosts stay; or from each host object), destroyed and eradicated (owner 2026-11-20: final, so the
+#            next init reuses the name at once)
+#   after    rescan, the hosts' detached-device entries forgotten, dsgrow's lock released and open requests closed,
+#            the record removed, Slack told
+# Stays: the template, the dsgrow accounts, the VCF Ops objects, the rulebook and the bridge.
+# Anything under the demo's names that the record does not match stops the run before it changes anything.
+# Rerun on a clean environment: changed=0.
+#   bash tools/setup.sh demo/cleanup.yml [--confirm cleanup.yml]
+- name: Clean up the demo environment
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/eda.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware: &dd_vc_args
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+    dsgrow_datastore_backing: *dd_vc_args
+    esx_vmfs_volume: *dd_vc_args
+    cluster_ha_heartbeat_info: *dd_vc_args
+    cluster_ha_heartbeat_pref: *dd_vc_args
+    group/everpure.flasharray.everpure.flasharray:
+      fa_url: "{{ dd_fa_url }}"
+      api_token: "{{ dsgrow_fa_token }}"
+      disable_warnings: true
+  tasks:
+    - name: Common
+      ansible.builtin.include_tasks: tasks/common.yml
+
+    - name: Read the demo's objects
+      ansible.builtin.include_tasks: tasks/read.yml
+
+    - name: The VM's disks
+      community.vmware.vmware_guest_disk_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+      register: dc_disks
+      check_mode: false
+      when: dd_has_vm
+
+    - name: The demo's dsgrow lock
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_read
+      vars:
+        dsgrow_vc: "{{ dd_vc }}"
+        dsgrow_datastore_name: "{{ dd.datastore }}"
+
+    # execute.yml writes the array and VMFS while it holds the lock as `executing`: never pull the datastore from under it
+    - name: No expansion is executing on {{ dd.datastore }}
+      ansible.builtin.assert:
+        that: not (dsgrow_lock_held | bool and dsgrow_lock.status | default('') == 'executing')
+        fail_msg: "an expansion of {{ dd.datastore }} is executing (request {{ dsgrow_lock.rid | default('?') }}): wait for it, then clean up"
+        quiet: true
+
+    # ------------------------------------------------------------------ identity, before anything changes
+    # A VM is ours by the UUID init recorded or, when init failed between the clone and recording it, by the
+    # annotation init gives the clone ("dsgrow-demo <instance>"). The datastore is ours by its one extent (the EUI init
+    # records before creating it) and, when recorded, its VMFS UUID; it is detached by the UUID read now.
+    - name: Identity facts
+      ansible.builtin.set_fact:
+        dd_present: "{{ dd_has_vm or dd_ds.matches > 0 or dd_has_vol or dd_vol_deleted }}"
+        dd_vm_is_ours: >-
+          {{ dd_has_vm and (dd_vm.instance_uuid == dd_rec.vm_uuid | default('')
+             or (dd_rec.vm_uuid is not defined and dd_rec.instance is defined
+                 and dd_vm.annotation | default('') == 'dsgrow-demo ' ~ dd_rec.instance)) }}
+        dd_vmfs_uuid: "{{ dd_ds.datastore.vmfs_uuid if dd_ds.matches == 1 else dd_rec.vmfs_uuid | default('') }}"
+
+    - name: Everything under the demo's names is what init recorded
+      ansible.builtin.assert:
+        that: dc_problems | length == 0
+        fail_msg: "refusing to remove anything: {{ dc_problems }}"
+        success_msg: >-
+          {{ 'nothing to remove: the environment is clean' if not dd_present
+             else 'removing: ' ~ ([dd.vm if dd_vm else none, dd.datastore if dd_ds.matches else none,
+                                   dd.volume if (dd_vol or dd_vol_deleted) else none] | select | join(', ')) }}
+        quiet: false
+      vars:
+        dc_problems: >-
+          {% set out = [] %}
+          {%- if dd_present and not dd_rec %}{% set _ = out.append('demo objects exist but ' ~ dd_state_file ~ ' is missing: check by hand') %}{% endif %}
+          {%- if dd_has_vm and not dd_vm_is_ours %}
+          {%- set _ = out.append('VM ' ~ dd.vm ~ ' is not the one init created (UUID ' ~ dd_vm.instance_uuid ~ ', annotation ' ~ dd_vm.annotation | default('') ~ ')') %}{% endif %}
+          {%- if dd_vm and dc_disks.guest_disk_info.values() | map(attribute='backing_datastore') | reject('equalto', dd.datastore) | list | length > 0 %}
+          {%- set _ = out.append('VM ' ~ dd.vm ~ ' has disks outside ' ~ dd.datastore) %}{% endif %}
+          {%- if dd_ds.matches > 1 %}{% set _ = out.append(dd_ds.matches ~ ' datastores are named ' ~ dd.datastore) %}{% endif %}
+          {%- if dd_ds.matches == 1 %}
+          {%- if dd_rec.vmfs_uuid is defined and dd_ds.datastore.vmfs_uuid != dd_rec.vmfs_uuid %}
+          {%- set _ = out.append('datastore ' ~ dd.datastore ~ ' VMFS ' ~ dd_ds.datastore.vmfs_uuid ~ ' is not the recorded ' ~ dd_rec.vmfs_uuid | default('none')) %}{% endif %}
+          {%- if dd_ds.datastore.extents != [dd_rec.eui | default('')] %}
+          {%- set _ = out.append('datastore ' ~ dd.datastore ~ ' extents ' ~ dd_ds.datastore.extents ~ ', recorded ' ~ dd_rec.eui | default('none')) %}{% endif %}
+          {%- if dd_ds.datastore.vms | reject('equalto', dd.vm) | list | length > 0 %}
+          {%- set _ = out.append('datastore ' ~ dd.datastore ~ ' holds other VMs: ' ~ dd_ds.datastore.vms | reject('equalto', dd.vm) | list) %}{% endif %}
+          {%- if dd_ds.datastore.hosts | map(attribute='name') | reject('in', dd.esx_hosts) | list | length > 0 %}
+          {%- set _ = out.append('datastore ' ~ dd.datastore ~ ' is mounted outside ' ~ dd.esx_hosts) %}{% endif %}
+          {%- endif %}
+          {%- if dd_vol and (dd_vol.serial | upper) != (dd_rec.serial | default('') | upper) %}
+          {%- set _ = out.append('volume ' ~ dd.volume ~ ' serial ' ~ dd_vol.serial ~ ' is not the recorded ' ~ dd_rec.serial | default('none')) %}{% endif %}
+          {%- if dd_vol_deleted and (dd_vol_trash.serial | default('') | upper) != (dd_rec.serial | default('') | upper) %}
+          {%- set _ = out.append('volume ' ~ dd.volume ~ ' in the trash has serial ' ~ dd_vol_trash.serial | default('?') ~ ', not the recorded ' ~ dd_rec.serial | default('none')) %}{% endif %}
+          {%- if dd_vol %}
+          {%- set att = dd_rec.attach | default({'mode': 'hosts', 'hosts': []}) %}
+          {%- set groups_now = [] %}{% for n, g in dd_hgroups.items() %}
+          {%- if dd.volume in (g.vols | default([], true) | map(attribute='name') | list) %}{% set _ = groups_now.append(n) %}{% endif %}{% endfor %}
+          {%- set private_now = [] %}{% for n, h in dd_hosts.items() %}{% for c in h.volumes | default([]) %}
+          {%- if c.volume == dd.volume and not c.hostgroup %}{% set _ = private_now.append(n) %}{% endif %}{% endfor %}{% endfor %}
+          {%- set group_ok = (att.hgroup | default('')) if att.mode == 'hgroup' else '' %}
+          {%- if groups_now | reject('equalto', group_ok) | list | length > 0 %}
+          {%- set _ = out.append('volume ' ~ dd.volume ~ ' is connected to host groups ' ~ groups_now ~ ', init recorded ' ~ att) %}{% endif %}
+          {%- if private_now | reject('in', att.hosts if att.mode == 'hosts' else []) | list | length > 0 %}
+          {%- set _ = out.append('volume ' ~ dd.volume ~ ' has private connections to ' ~ private_now ~ ', init recorded ' ~ att) %}{% endif %}
+          {%- endif %}
+          {{- out }}
+
+    # ------------------------------------------------------------------ dsgrow: nobody may start an expansion now
+    # Closing the open requests is what stops execute.yml (it refuses a closed request); the lock (status cleaning)
+    # also makes execute.yml and propose.yml refuse the datastore until the end of this run (released below).
+    - name: HA heartbeat settings as found (read)
+      cluster_ha_heartbeat_pref:
+        cluster: "{{ dd.cluster }}"
+        datastores: "{{ dd.ha_heartbeat_datastores }}"
+        policy: userSelectedDs
+      check_mode: true
+      changed_when: false
+      register: dc_ha_found
+
+    # recorded once: a rerun after a failure (HA still on userSelectedDs) puts back what the first run found
+    - name: The HA settings to put back
+      ansible.builtin.set_fact:
+        dd_ha_before: "{{ dd_rec.ha_before | default(dc_ha_found.before) }}"
+
+    - name: Take the datastore away from dsgrow
+      when: dd_present
+      block:
+        - name: Record the HA settings in the demo record
+          ansible.builtin.copy:
+            content: "{{ dd_rec | combine({'ha_before': dd_ha_before}) | to_nice_json(indent=2) }}\n"
+            dest: "{{ dd_state_file }}"
+            mode: "0600"
+          when: dd_rec.ha_before is not defined
+
+        - name: Lock {{ dd.datastore }} for the cleanup
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: lock_write
+          vars:
+            dsgrow_vc: "{{ dd_vc }}"
+            dsgrow_datastore_name: "{{ dd.datastore }}"
+            dsgrow_lock_new: {rid: demo-cleanup, status: cleaning, expires: "{{ now(utc=true).timestamp() | int + 7200 }}"}
+
+        - name: Close the open requests for {{ dd.datastore }}
+          ansible.builtin.include_tasks: tasks/close_requests.yml
+          vars:
+            dc_close_reason: demo environment cleaned up (demo/cleanup.yml)
+
+    # ------------------------------------------------------------------ guest
+    - name: Delete {{ dd.vm }} and its disks (powered off first)
+      community.vmware.vmware_guest:
+        datacenter: "{{ dd_vc.datacenter }}"
+        uuid: "{{ dd_vm.instance_uuid }}"
+        use_instance_uuid: true
+        name: "{{ dd.vm }}"
+        state: absent
+        force: true
+      register: dc_vm_gone
+      when: dd_has_vm
+
+    # ------------------------------------------------------------------ vSphere
+    - name: Off the datastore
+      when: dd_ds.matches == 1
+      block:
+        - name: Nothing left on {{ dd.datastore }} but the seed
+          dsgrow_datastore_backing:
+            datacenter: "{{ dd_vc.datacenter }}"
+            datastore: "{{ dd.datastore }}"
+          register: dc_ds
+          check_mode: false
+
+        - name: No VM on it any more
+          ansible.builtin.assert:
+            that: dc_ds.datastore.vms | reject('equalto', dd.vm if ansible_check_mode else '') | list | length == 0
+            fail_msg: "{{ dd.datastore }} still holds {{ dc_ds.datastore.vms }}"
+            quiet: true
+
+        # with one other datastore, HA's "all feasible" policy picks the demo datastore as its second heartbeat: only
+        # user-selected ones while it goes, put back as found at the end
+        - name: HA heartbeats only on {{ dd.ha_heartbeat_datastores }}
+          cluster_ha_heartbeat_pref:
+            cluster: "{{ dd.cluster }}"
+            datastores: "{{ dd.ha_heartbeat_datastores }}"
+            policy: userSelectedDs
+
+        - name: HA no longer heartbeats on {{ dd.datastore }}
+          cluster_ha_heartbeat_info:
+            cluster: "{{ dd.cluster }}"
+          register: dc_ha
+          until: dd.datastore not in (dc_ha.heartbeat_datastores | default({}))
+          retries: 30
+          delay: 20
+          when: not ansible_check_mode
+
+        - name: Unmount and detach on every host
+          esx_vmfs_volume:
+            esxi_hostname: "{{ item }}"
+            vmfs_uuid: "{{ dd_vmfs_uuid }}"
+            device: "{{ dd_rec.eui }}"
+            state: detached
+          loop: "{{ dd.esx_hosts }}"
+          register: dc_detached
+
+    # ------------------------------------------------------------------ array
+    # As init recorded it (checked above: the volume is connected nowhere else). purefa_hg state absent WITH `volume`
+    # disconnects only those volumes; WITHOUT it, it deletes the host group (1.46.0 main()): the volume is always named
+    # (test_flasharray_disconnect_always_names_the_volume), and the guard below makes sure it is not empty
+    - name: The host group disconnect names the demo volume
+      ansible.builtin.assert:
+        that: dd.volume | length > 0 and dd_rec.attach.hgroup | default('') | length > 0
+        fail_msg: "refusing purefa_hg state absent without a volume name or host group"
+        quiet: true
+      when: dd_has_vol and dd_rec.attach.mode | default('') == 'hgroup'
+
+    - name: "{{ dd.array }}: disconnect {{ dd.volume }} from host group {{ dd_rec.attach.hgroup | default('-') }}"
+      everpure.flasharray.purefa_hg:
+        name: "{{ dd_rec.attach.hgroup }}"
+        volume: ["{{ dd.volume }}"]
+        state: absent
+      when: dd_has_vol and dd_rec.attach.mode | default('') == 'hgroup'
+
+    - name: "{{ dd.array }}: disconnect {{ dd.volume }} from each host object"
+      everpure.flasharray.purefa_host:
+        name: "{{ item }}"
+        volume: "{{ dd.volume }}"
+        state: absent
+      loop: "{{ dd_rec.attach.hosts | default([]) }}"
+      when: dd_has_vol and dd_rec.attach.mode | default('') == 'hosts'
+
+    - name: "{{ dd.array }}: destroy and eradicate {{ dd.volume }}"
+      everpure.flasharray.purefa_volume:
+        name: "{{ dd.volume }}"
+        state: absent
+        eradicate: true
+      register: dc_vol_gone
+      when: dd_has_vol or dd_vol_deleted
+
+    # ------------------------------------------------------------------ after
+    # A LUN went away: HBA rescan, no VMFS rescan (that is for a LUN attached; owner 2026-11-21, skill
+    # vmfs-datastore-expand "When to rescan")
+    - name: Rescan so the hosts drop the device
+      community.vmware.vmware_host_scanhba:
+        esxi_hostname: "{{ item }}"
+        rescan_hba: true
+        rescan_vmfs: false
+        refresh_storage: true
+      loop: "{{ dd.esx_hosts }}"
+      changed_when: false
+      when: not ansible_check_mode and dd_rec.eui is defined and dd_vmfs_uuid | length > 0
+
+    # DeleteScsiLunState succeeds even without an entry, so this runs while the record exists (a rerun after a partial
+    # failure finishes it) and not once the record is gone (a rerun on a clean environment: changed=0)
+    - name: Forget the detached-device entries
+      esx_vmfs_volume:
+        esxi_hostname: "{{ item }}"
+        vmfs_uuid: "{{ dd_vmfs_uuid }}"
+        device: "{{ dd_rec.eui }}"
+        state: forgotten
+      loop: "{{ dd.esx_hosts }}"
+      when: not ansible_check_mode and dd_rec.eui is defined and dd_vmfs_uuid | length > 0
+
+    - name: HA back as found ({{ dd_ha_before.policy }}, preferred {{ dd_ha_before.datastores }})
+      cluster_ha_heartbeat_pref:
+        cluster: "{{ dd.cluster }}"
+        datastores: "{{ dd_ha_before.datastores }}"
+        policy: "{{ dd_ha_before.policy }}"
+
+    - name: HA read back
+      cluster_ha_heartbeat_pref:
+        cluster: "{{ dd.cluster }}"
+        datastores: "{{ dd_ha_before.datastores }}"
+        policy: "{{ dd_ha_before.policy }}"
+      check_mode: true
+      changed_when: false
+      register: dc_ha_back
+      when: not ansible_check_mode
+
+    - name: HA is as it was found
+      ansible.builtin.assert:
+        that: dc_ha_back.before.policy == dd_ha_before.policy
+        success_msg: >-
+          HA heartbeat policy {{ dc_ha_back.before.policy }}, preferred {{ dc_ha_back.before.datastores }}
+          {%- if dc_ha_back.before.datastores != dd_ha_before.datastores %} (found with {{ dd_ha_before.datastores }}: vSphere kept the
+          preference; harmless with all feasible datastores){% endif %}
+        fail_msg: "HA policy is {{ dc_ha_back.before }}, was {{ dd_ha_before }}"
+      when: not ansible_check_mode
+
+    - name: Read the demo's objects again
+      ansible.builtin.include_tasks: tasks/read.yml
+      when: not ansible_check_mode
+
+    - name: Nothing left under the demo's names
+      ansible.builtin.assert:
+        that:
+          - not dd_has_vm
+          - dd_ds.matches == 0
+          - not dd_has_vol
+          - not dd_vol_deleted
+        fail_msg: "left: VM {{ dd_vm | bool }}, datastores {{ dd_ds.matches }}, volume {{ dd_vol | bool }}, in trash {{ dd_vol_deleted }}"
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: Release the datastore's lock
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_write
+      vars:
+        dsgrow_vc: "{{ dd_vc }}"
+        dsgrow_datastore_name: "{{ dd.datastore }}"
+        dsgrow_lock_new: {rid: demo-cleanup, status: released, expires: 0}
+      when: dd_present
+
+    - name: Forget the record
+      ansible.builtin.file:
+        path: "{{ dd_state_file }}"
+        state: absent
+      register: dc_rec_gone
+
+    - name: Slack - cleaned up
+      ansible.builtin.include_tasks: tasks/slack_note.yml
+      vars:
+        dd_note: >-
+          :broom: *Demo environment cleaned up.* VM `{{ dd.vm }}`, datastore `{{ dd.datastore }}` and FlashArray volume
+          `{{ dd.volume }}` (eradicated on {{ dd.array }}) are gone. "initialize the demo" builds it again.
+      when: not ansible_check_mode and dd_present
+
+    - name: Clean
+      ansible.builtin.debug:
+        msg: "{{ 'check mode: nothing was changed' if ansible_check_mode else 'the demo environment is clean' }}"

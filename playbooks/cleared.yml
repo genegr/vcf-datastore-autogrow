@@ -1,0 +1,122 @@
+---
+# Slack only. Run by the rulebook's `cleared` rule when VCF Ops cancels a datastore capacity alert.
+# A proposal still waiting for a click is withdrawn (buttons removed, request cleared, lock released); a request that
+# is executing, done or failed only gets a note in its thread.
+# In: ansible_eda.event (payload: dsgrow.vcfops.v1, event: canceled).
+- name: A datastore capacity alert was cleared
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dsgrow_alert: "{{ ansible_eda.event.payload | default({}) }}"
+  tasks:
+    - name: Cleared
+      block:
+        - name: Validate the alert
+          ansible.builtin.include_role:
+            name: dsgrow_resolve
+            tasks_from: alert_input
+
+        - name: The vCenter of the datastore
+          ansible.builtin.include_role:
+            name: dsgrow_resolve
+            tasks_from: pick_vcenter
+
+        - name: The datastore's lock
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: lock_read
+
+        - name: Nothing to clear
+          ansible.builtin.debug:
+            msg: "{{ dsgrow_datastore_name }}: no request recorded, nothing to update"
+          when: dsgrow_lock.rid is not defined
+
+        - name: Stop when there is no request
+          ansible.builtin.meta: end_host
+          when: dsgrow_lock.rid is not defined
+
+        - name: The request
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: request_read
+          vars:
+            dsgrow_rid: "{{ dsgrow_lock.rid }}"
+
+        # Decide once: a block's `when` is re-evaluated for every task in it, and "Mark the request cleared" changes
+        # dsgrow_request.status, which skipped the write and the lock release (measured 2026-11-20).
+        - name: The request's status when the alert cleared
+          ansible.builtin.set_fact:
+            dsgrow_status_at_clear: "{{ dsgrow_request.status }}"
+
+        - name: Withdraw a proposal nobody acted on
+          when: dsgrow_status_at_clear == 'proposed'
+          block:
+            - name: Withdrawn text
+              ansible.builtin.set_fact:
+                dsgrow_slack_status: >-
+                  :large_green_circle: VCF Operations cleared the alert
+                  ({{ dsgrow_alert.cancel_time | default('') | dsgrow_slack_escape }}). Request withdrawn, nothing changed.
+
+            - name: Status blocks
+              ansible.builtin.include_role:
+                name: dsgrow_slack
+                tasks_from: status
+
+            - name: Update the proposal
+              ansible.builtin.include_role:
+                name: dsgrow_slack
+                tasks_from: api
+              vars:
+                dsgrow_slack_method: chat.update
+                dsgrow_slack_body:
+                  channel: "{{ dsgrow_request.slack.channel }}"
+                  ts: "{{ dsgrow_request.slack.ts }}"
+                  text: "Alert on {{ dsgrow_request.ds }} cleared"
+                  blocks: "{{ dsgrow_slack_blocks }}"
+
+            - name: Mark the request cleared
+              ansible.builtin.include_role:
+                name: dsgrow_state
+                tasks_from: request_write
+              vars:
+                dsgrow_request_update: {status: cleared, cleared_at: "{{ now(utc=true).isoformat() }}"}
+
+            - name: Release the lock
+              ansible.builtin.include_role:
+                name: dsgrow_state
+                tasks_from: lock_write
+              vars:
+                dsgrow_lock_new: {rid: "{{ dsgrow_request.rid }}", status: released, expires: 0}
+
+        - name: Note in the thread of a request already acted on
+          ansible.builtin.include_role:
+            name: dsgrow_slack
+            tasks_from: api
+          vars:
+            dsgrow_slack_method: chat.postMessage
+            dsgrow_slack_body:
+              channel: "{{ dsgrow_request.slack.channel }}"
+              thread_ts: "{{ dsgrow_request.slack.ts }}"
+              text: ":large_green_circle: VCF Operations cleared the alert (request is {{ dsgrow_status_at_clear }})."
+          when: dsgrow_status_at_clear in ['executing', 'done', 'failed']
+
+      rescue:
+        - name: Report in the request's thread
+          ansible.builtin.include_role:
+            name: dsgrow_slack
+            tasks_from: api
+          vars:
+            dsgrow_slack_method: chat.postMessage
+            dsgrow_slack_body:
+              channel: "{{ dsgrow_request.slack.channel }}"
+              thread_ts: "{{ dsgrow_request.slack.ts }}"
+              text: >-
+                :warning: The alert was cleared but updating this request failed:
+                {{ (ansible_failed_result.msg | default('?')) | string | truncate(1000) | dsgrow_slack_escape }}
+          when: dsgrow_request.slack is defined
+
+        - name: Fail the run
+          ansible.builtin.fail:
+            msg: >-
+              cleared.yml failed: {{ ansible_failed_result.msg | default('?') }}
+              (step: {{ ansible_failed_task.name | default('?') }})

@@ -1,0 +1,158 @@
+---
+# READ-ONLY. Run by the rulebook's `propose` rule for a VCF Ops datastore capacity alert (new / updated).
+# Resolves the datastore to its FlashArray volume, runs the preflight, computes the size options and posts the
+# proposal to Slack; writes the request file that execute.yml will hold the approval against.
+# In: ansible_eda.event (payload: dsgrow.vcfops.v1; meta.uuid becomes the request id).
+- name: Propose a datastore expansion
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dsgrow_alert: "{{ ansible_eda.event.payload | default({}) }}"
+    dsgrow_rid: "{{ ansible_eda.event.meta.uuid | default(now(utc=true).isoformat() | to_uuid) }}"
+  tasks:
+    - name: Propose
+      block:
+        - name: Validate the alert
+          ansible.builtin.include_role:
+            name: dsgrow_resolve
+            tasks_from: alert_input
+          tags: [preflight]
+
+        - name: The vCenter of the datastore
+          ansible.builtin.include_role:
+            name: dsgrow_resolve
+            tasks_from: pick_vcenter
+          tags: [preflight, vsphere]
+
+        - name: State directories
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: dirs
+
+        - name: Is a request for this datastore already in flight
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: lock_read
+
+        - name: One request per datastore in flight (rule 5)
+          ansible.builtin.debug:
+            msg: >-
+              {{ dsgrow_datastore_name }}: request {{ dsgrow_lock.rid }} is {{ dsgrow_lock.status }} until
+              {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(dsgrow_lock.expires | int, utc=true) }}; nothing new proposed
+          when: dsgrow_lock_held
+
+        - name: Stop here when one is in flight
+          ansible.builtin.meta: end_host
+          when: dsgrow_lock_held
+
+        - name: Resolve the datastore to its FlashArray volume
+          ansible.builtin.include_role:
+            name: dsgrow_resolve
+          tags: [preflight, vsphere, flasharray]
+
+        - name: Preflight and size options
+          ansible.builtin.include_role:
+            name: dsgrow_preflight
+          vars:
+            dsgrow_preflight_mode: propose
+          tags: [preflight]
+
+        - name: Expiry
+          ansible.builtin.set_fact:
+            dsgrow_expires: "{{ now(utc=true).timestamp() | int + (dsgrow_request_ttl_hours | int) * 3600 }}"
+
+        - name: Expiry (text)
+          ansible.builtin.set_fact:
+            dsgrow_expires_iso: "{{ '%Y-%m-%d %H:%M UTC' | strftime(dsgrow_expires | int, utc=true) }}"
+
+        - name: Build the proposal
+          ansible.builtin.include_role:
+            name: dsgrow_slack
+            tasks_from: proposal
+          tags: [slack]
+
+        - name: Post the proposal
+          ansible.builtin.include_role:
+            name: dsgrow_slack
+            tasks_from: api
+          vars:
+            dsgrow_slack_method: chat.postMessage
+            dsgrow_slack_body:
+              channel: "{{ dsgrow_slack_channel }}"
+              text: "{{ dsgrow_slack_text }}"
+              blocks: "{{ dsgrow_slack_blocks }}"
+              unfurl_links: false
+          tags: [slack]
+
+        - name: The request
+          ansible.builtin.set_fact:
+            dsgrow_request:
+              rid: "{{ dsgrow_rid }}"
+              status: proposed
+              created_at: "{{ now(utc=true).isoformat() }}"
+              expires: "{{ dsgrow_expires | int }}"
+              alert:
+                alert_id: "{{ dsgrow_alert.alert_id | default('') }}"
+                alert_definition: "{{ dsgrow_alert.alert_definition | default('') }}"
+                resource_id: "{{ dsgrow_alert.resource_id | default('') }}"
+                adapter_instance: "{{ dsgrow_alert.adapter_instance | default('') }}"
+                link: "{{ dsgrow_alert.link | default('') }}"
+              vc: "{{ dsgrow_vc.hostname }}"
+              vc_key: "{{ dsgrow_vc.key }}"
+              ds: "{{ dsgrow_datastore_name }}"
+              dev: "{{ dsgrow_device }}"
+              fa_array: "{{ dsgrow_fa_match.array.name }}"
+              fa_volume: "{{ dsgrow_fa_match.volume.name }}"
+              at_proposal:
+                volume_bytes: "{{ dsgrow_current_bytes | int }}"
+                vmfs_capacity_bytes: "{{ dsgrow_backing.capacity_bytes | int }}"
+                vmfs_used_bytes: "{{ dsgrow_backing.used_bytes | int }}"
+                hosts: "{{ dsgrow_hosts }}"
+              options: "{{ dsgrow_options.options | map(attribute='target_bytes') | list }}"
+              refused: "{{ dsgrow_options.refused }}"
+              slack:
+                channel: "{{ dsgrow_slack_result.channel }}"
+                ts: "{{ dsgrow_slack_result.ts }}"
+              blocks: "{{ dsgrow_slack_blocks }}"
+
+        - name: Write the request
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: request_write
+
+        - name: Hold the datastore's lock
+          ansible.builtin.include_role:
+            name: dsgrow_state
+            tasks_from: lock_write
+          vars:
+            dsgrow_lock_new:
+              rid: "{{ dsgrow_rid }}"
+              status: proposed
+              expires: "{{ dsgrow_expires | int }}"
+
+        - name: Job artifacts
+          ansible.builtin.set_stats:
+            data:
+              dsgrow_request_id: "{{ dsgrow_rid }}"
+              dsgrow_datastore: "{{ dsgrow_datastore_name }}"
+              dsgrow_options: "{{ dsgrow_options.options | map(attribute='target_bytes') | list }}"
+
+      rescue:
+        - name: Report why no proposal was made
+          ansible.builtin.include_role:
+            name: dsgrow_slack
+            tasks_from: api
+          vars:
+            dsgrow_slack_method: chat.postMessage
+            dsgrow_slack_body:
+              channel: "{{ dsgrow_slack_channel }}"
+              text: >-
+                :warning: dsgrow could not propose an expansion for
+                {{ (dsgrow_alert.resource_name | default('?')) | dsgrow_slack_escape }}:
+                {{ (ansible_failed_result.msg | default('unknown error')) | string | truncate(2500) | dsgrow_slack_escape }}
+                (step: {{ ansible_failed_task.name | default('?') }}, request {{ dsgrow_rid }})
+          when: dsgrow_slack_channel | length > 0
+
+        - name: Fail the run
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_result.msg | default('propose failed') }}"

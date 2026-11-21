@@ -1,0 +1,121 @@
+everpure.flasharray 1.46.0, issue #1103 (Everpure-Ansible/FlashArray-Collection): Purity returns
+priority_adjustment.priority_adjustment_value = null on every volume of the lab arrays (Purity 6.12.3/6.12.4, REST 2.59);
+py-pure-client leaves it unset and reading it raises AttributeError, so purefa_info volumes/vgroups and purefa_volume on
+an existing volume fail with "Module failed.". Fixed upstream (commit 333dcca, issue closed 2026-11-05) but in no
+release yet. This patch reads the value with getattr(..., None), as the upstream fix does; behaviour is unchanged
+when the array returns a value. Generated 2026-11-20 from the installed 1.46.0 files. Applied by docker/eda.Dockerfile
+(patch -p1 --forward, the build fails if it does not apply) and checked by docker/check_flasharray_patch.py.
+DROP THIS FILE when a release ships the fix (bump docker/requirements.yml, rebuild, rerun the probe).
+
+--- a/plugins/modules/purefa_info.py
++++ b/plugins/modules/purefa_info.py
+@@ -143,6 +143,11 @@
+ REPL_LAG_API_VERSION = "2.2"
+ PGROUP_REPL_PERF_API_VERSION = "2.1"
+ SNAP_TRANSFER_API_VERSION = "2.0"
++
++
++def _pa_str(value):
++    """Issue #1103: Purity may leave priority_adjustment_value unset (null)."""
++    return "" if value is None else str(value)
+ 
+ 
+ def _is_cbs(array):
+@@ -1907,7 +1912,7 @@
+             volume_info[volume]["priority"] = vol.priority
+             volume_info[volume]["priority_adjustment"] = (
+                 vol.priority_adjustment.priority_adjustment_operator
+-                + str(vol.priority_adjustment.priority_adjustment_value)
++                + _pa_str(getattr(vol.priority_adjustment, "priority_adjustment_value", None))
+             )
+         if LooseVersion(SHARED_CAP_API_VERSION) <= LooseVersion(
+             array.get_rest_version()
+@@ -2004,7 +2009,7 @@
+             volume_info[volume]["priority"] = vol.priority
+             volume_info[volume]["priority_adjustment"] = (
+                 vol.priority_adjustment.priority_adjustment_operator
+-                + str(vol.priority_adjustment.priority_adjustment_value)
++                + _pa_str(getattr(vol.priority_adjustment, "priority_adjustment_value", None))
+             )
+         connections = list(array.get_connections(volume_names=[vol.name]).items)
+         voldict = {}
+@@ -2841,7 +2846,7 @@
+         if hasattr(vgroup, "priority_adjustment"):
+             vgroups_info[name]["priority_adjustment"] = (
+                 vgroup.priority_adjustment.priority_adjustment_operator
+-                + str(vgroup.priority_adjustment.priority_adjustment_value)
++                + _pa_str(getattr(vgroup.priority_adjustment, "priority_adjustment_value", None))
+             )
+     if LooseVersion(TAGS_API_VERSION) <= LooseVersion(array.get_rest_version()):
+         vgroup_tags = list(array.get_volume_groups_tags(resource_destroyed=False).items)
+@@ -2947,7 +2952,7 @@
+         if hasattr(vgroup, "priority_adjustment"):
+             vgroups_info[name]["priority_adjustment"] = (
+                 vgroup.priority_adjustment.priority_adjustment_operator
+-                + str(vgroup.priority_adjustment.priority_adjustment_value)
++                + _pa_str(getattr(vgroup.priority_adjustment, "priority_adjustment_value", None))
+             )
+     vg_volumes = list(array.get_volume_groups_volumes().items)
+     for vg_vol in vg_volumes:
+--- a/plugins/modules/purefa_volume.py
++++ b/plugins/modules/purefa_volume.py
+@@ -409,7 +409,7 @@
+             ] = volume_data.priority_adjustment.priority_adjustment_operator
+             volfact[volume_name][
+                 "priority_value"
+-            ] = volume_data.priority_adjustment.priority_adjustment_value
++            ] = getattr(volume_data.priority_adjustment, "priority_adjustment_value", None)
+         if LooseVersion(CONTEXT_API_VERSION) <= LooseVersion(api_version):
+             volfact[volume_name]["context"] = volume_data.context.name
+     else:
+@@ -1005,7 +1005,7 @@
+                 volfact[vol_name][
+                     "priority_operator"
+                 ] = adj.priority_adjustment_operator
+-                volfact[vol_name]["priority_value"] = adj.priority_adjustment_value
++                volfact[vol_name]["priority_value"] = getattr(adj, "priority_adjustment_value", None)
+ 
+     module.exit_json(changed=changed, volume=volfact)
+ 
+@@ -1208,18 +1208,18 @@
+         if (
+             module.params["priority_value"]
+             and module.params["priority_value"]
+-            != vol.priority_adjustment.priority_adjustment_value
++            != getattr(vol.priority_adjustment, "priority_adjustment_value", None)
+         ):
+             change_prio = True
+             newval = module.params["priority_value"]
+         elif (
+             not module.params["priority_value"]
+-            and vol.priority_adjustment.priority_adjustment_value != 0
++            and getattr(vol.priority_adjustment, "priority_adjustment_value", None) != 0
+         ):
+             change_prio = True
+             newval = 0
+         else:
+-            newval = vol.priority_adjustment.priority_adjustment_value
++            newval = getattr(vol.priority_adjustment, "priority_adjustment_value", None)
+         volumepatch = VolumePatch(
+             priority_adjustment=PriorityAdjustment(
+                 priority_adjustment_operator=newop,
+--- a/plugins/modules/purefa_vg.py
++++ b/plugins/modules/purefa_vg.py
+@@ -519,7 +519,7 @@
+     if LooseVersion(PRIORITY_API_VERSION) <= LooseVersion(api_version):
+         vg_prio = vg_all.priority_adjustment
+         new_operator = vg_prio.priority_adjustment_operator
+-        new_value = vg_prio.priority_adjustment_value
++        new_value = getattr(vg_prio, "priority_adjustment_value", None)
+ 
+         if (
+             module.params.get("priority_operator") is not None
+@@ -531,7 +531,7 @@
+ 
+         if (
+             module.params.get("priority_value") is not None
+-            and vg_prio.priority_adjustment_value != module.params["priority_value"]
++            and getattr(vg_prio, "priority_adjustment_value", None) != module.params["priority_value"]
+         ):
+             new_value = module.params["priority_value"]
+             changed = True

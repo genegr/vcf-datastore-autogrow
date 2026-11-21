@@ -1,0 +1,12 @@
+---
+# A plain line in the demo channel (In: dd_note, mrkdwn). Uses roles/dsgrow_slack (token from the environment).
+- name: Slack - {{ dd_note | truncate(60) }}
+  ansible.builtin.include_role:
+    name: dsgrow_slack
+    tasks_from: api
+  vars:
+    dsgrow_slack_method: chat.postMessage
+    dsgrow_slack_body:
+      channel: "{{ dsgrow_slack_channel }}"
+      text: "{{ dd_note }}"
+      unfurl_links: false

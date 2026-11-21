@@ -1,0 +1,54 @@
+# dsgrow on the run host (~/vsphere-dsgrow). Host network: the lab DNS lives in Docker's default bridge range
+# (nested-vcf compose.yaml), VCF Ops posts to <run host>:5080, the bridge reaches the approvals source on loopback.
+# Secrets: .state/eda.env and .state/bridge.env (mode 0600, rendered by setup/deploy.yml from the dsgrow vault; never
+# committed). The bridge's file holds only Slack and the approvals source; vCenter and array secrets only the eda's.
+#   docker compose up -d rulebook bridge          the demo services
+#   docker compose run --rm -T eda <command>      lint, tests, probes, setup playbooks
+x-eda: &eda
+  image: dsgrow-eda:1
+  build:
+    context: docker
+    dockerfile: eda.Dockerfile
+    network: host
+  network_mode: host
+  user: "${UID:-1000}:${GID:-1000}"
+  working_dir: /work
+  volumes:
+    - ./:/work
+  environment:
+    HOME: /work/.state/home
+    ANSIBLE_CONFIG: /work/ansible.cfg
+    DSGROW_STATE_DIR: /work/state
+
+services:
+  eda:
+    <<: *eda
+    profiles: [tools]
+    stdin_open: true
+    tty: true
+
+  rulebook:
+    <<: *eda
+    env_file: .state/eda.env
+    restart: unless-stopped
+    command:
+      - ansible-rulebook
+      - --rulebook
+      - rulebooks/datastore_capacity.yml
+      - --inventory
+      - inventory/vcf9-1
+      - --vars
+      - rulebooks/vars.yml
+      - --env-vars
+      - DSGROW_EDA_VCFOPS_TOKEN,DSGROW_EDA_APPROVALS_TOKEN,DSGROW_APPROVAL_HMAC_SECRET
+      - --verbose
+
+  bridge:
+    image: dsgrow-bridge:1
+    build:
+      context: .
+      dockerfile: docker/bridge.Dockerfile
+      network: host
+    network_mode: host
+    env_file: .state/bridge.env
+    restart: unless-stopped

@@ -1,0 +1,29 @@
+---
+profile: production
+exclude_paths:
+  - .venv/
+  - .state/
+  - state/
+  - tests/fixtures/
+  - vcf-ops/
+  - slack/
+  - .claude/
+  - compose.yaml
+# First match wins: the specific files before the directory globs.
+kinds:
+  - vars: "rulebooks/vars.yml"
+  - vars: "setup/secrets.example.yml"
+  - tasks: "setup/tasks/*.yml"
+  - tasks: "tests/probes/eui_serial_array.yml"
+  - tasks: "tests/offline/refusal.yml"
+  - rulebook: "rulebooks/datastore_capacity.yml"
+  - playbook: "playbooks/*.yml"
+  - playbook: "setup/*.yml"
+  - playbook: "demo/*.yml"
+  - playbook: "tests/probes/*.yml"
+  - playbook: "tests/offline/logic.yml"
+  - playbook: "tests/rulebook/playbooks/*.yml"
+skip_list:
+  - var-naming[no-role-prefix]   # roles share dsgrow_* facts across includes by design (CLAUDE.md conventions)
+  - name[template]               # task names carry the array / vCenter for readable logs
+  - jinja[spacing]               # multi-line {% for %} templates in folded scalars stay one statement per line

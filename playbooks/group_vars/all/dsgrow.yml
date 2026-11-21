@@ -1,0 +1,43 @@
+---
+# Policy defaults (CLAUDE.md "Policy defaults"). Next to the playbooks because ansible-rulebook's run_playbook copies
+# only this directory. An inventory overrides them in group_vars/dsgrow/ (higher precedence than playbook
+# group_vars/all). Loosening a cap is a safety-review WARN.
+dsgrow_target_utilization_options: [0.70, 0.65, 0.60]   # one Slack button per distinct option
+dsgrow_size_step_bytes: 274877906944        # 256 GiB: targets rounded UP to this step
+dsgrow_max_growth_pct: 50                   # per request, relative to current volume size
+dsgrow_max_growth_bytes: 10995116277760     # 10 TiB per request
+dsgrow_max_volume_bytes: 70368744177664     # 64 TiB (VMFS6 limit)
+dsgrow_fa_min_free_pct_after: 20            # array physical free space required after growth
+dsgrow_request_ttl_hours: 4
+dsgrow_throttle: "4 hours"                  # rulebook throttle per alert, resource_id + alert_id (hardcoded there: keep equal)
+dsgrow_capacity_tolerance_pct: 1            # verify step: VMFS capacity vs device size
+
+# The alert definitions the rulebook acts on (names as VCF Ops sends ${ALERT_DEFINITION}; setup/vcfops.yml)
+dsgrow_alert_definitions:
+  - "dsgrow - datastore capacity"
+
+# Request files and locks (roles/dsgrow_state); mounted into the eda container, never under playbooks/
+dsgrow_state_dir: "{{ lookup('ansible.builtin.env', 'DSGROW_STATE_DIR', default='/work/state') }}"
+
+# Slack (ids are not secrets; the bot token is read from the environment by roles/dsgrow_slack with no_log)
+dsgrow_slack_api: https://slack.com/api
+dsgrow_slack_channel: "{{ lookup('ansible.builtin.env', 'DSGROW_SLACK_CHANNEL') }}"
+dsgrow_approver_ids: "{{ lookup('ansible.builtin.env', 'DSGROW_APPROVER_IDS') | split(',') | map('trim') | reject('equalto', '') | list }}"
+
+# Credentials, resolved lazily for the vCenter / array in scope: the dsgrow vault's variable when loaded (setup and
+# probe runs, setup/tasks/secrets_load.yml), else the environment variable the inventory names (the rulebook
+# container, .state/eda.env). Used only in no_log tasks or module password parameters.
+dsgrow_vc_password: >-
+  {{ lookup('ansible.builtin.vars', 'dsgrow_secret_vc_password_' ~ dsgrow_vc.key, default='')
+     or lookup('ansible.builtin.env', dsgrow_vc.password_env) }}
+dsgrow_fa_token: >-
+  {{ lookup('ansible.builtin.vars', 'dsgrow_secret_fa_token_' ~ (dsgrow_fa_array.key | regex_replace('[^A-Za-z0-9]', '_') | lower), default='')
+     or lookup('ansible.builtin.env', dsgrow_fa_array.token_env) }}
+
+# The policy as one dict for the filters (plugins/filter/dsgrow.py)
+dsgrow_policy:
+  size_step_bytes: "{{ dsgrow_size_step_bytes | int }}"
+  max_growth_pct: "{{ dsgrow_max_growth_pct | int }}"
+  max_growth_bytes: "{{ dsgrow_max_growth_bytes | int }}"
+  max_volume_bytes: "{{ dsgrow_max_volume_bytes | int }}"
+  fa_min_free_pct_after: "{{ dsgrow_fa_min_free_pct_after | int }}"

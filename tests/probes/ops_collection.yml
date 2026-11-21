@@ -1,0 +1,146 @@
+---
+# READ-ONLY probe (owner 2026-11-20: the demo cannot wait 5 minutes for VCF Ops): how often VCF Ops 9.1.1 collects the
+# demo's datastore, before a gated change lowers the vCenter adapter's collection interval.
+#   - the VMWARE adapter instances: id, name, monitoringInterval (minutes), collector, last collection
+#   - each Datastore resource's monitoringInterval
+#   - the raw samples of capacity|usedSpacePct and diskspace|diskused of the last 90 minutes for the demo datastore
+#     (also when it was removed: its history stays) and the domain's main datastore: the gaps between samples are the
+#     real cadence, and whether usedSpacePct changes at every sample
+# Only GETs plus token acquire / release, as the local admin (nested-vcf vault_vcf_password, read-only use).
+#   bash tools/probe.sh tests/probes/ops_collection.yml
+# Output: .state/probes/ops_collection.json (no secrets).
+- name: VCF Operations collection cadence
+  hosts: localhost
+  gather_facts: false
+  vars:
+    nvcf: /nvcf
+    pr_ops: https://ops.vcf9-1.lab/suite-api
+    pr_out: /work/.state/probes
+    pr_datastores: [dsgrow-demo01, vcf9-1-w02-ds01]
+    pr_stat_keys: [capacity|usedSpacePct, diskspace|diskused]
+    pr_minutes: 90
+  vars_files:
+    - "{{ nvcf }}/labs/vcf9-1.vault.yml"
+  tasks:
+    - name: The window
+      ansible.builtin.set_fact:
+        pr_end_ms: "{{ (now(utc=true).timestamp() * 1000) | int }}"
+        pr_begin_ms: "{{ ((now(utc=true).timestamp() - pr_minutes * 60) * 1000) | int }}"
+
+    - name: Token for the local admin
+      ansible.builtin.uri:
+        url: "{{ pr_ops }}/api/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: pr_tok
+      no_log: true
+
+    - name: Read, then always release the token
+      block:
+        - name: The VMWARE adapter instances
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/adapters?adapterKindKey=VMWARE"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+          register: pr_adapters
+          no_log: true
+
+        - name: Each adapter instance in full
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/adapters/{{ item.id }}"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+          loop: "{{ pr_adapters.json.adapterInstancesInfoDto | default([]) }}"
+          loop_control:
+            label: "{{ item.resourceKey.name }}"
+          register: pr_adapter_full
+          no_log: true
+
+        - name: The datastores
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/resources?adapterKind=VMWARE&resourceKind=Datastore&name={{ item | urlencode }}"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+          loop: "{{ pr_datastores }}"
+          register: pr_ds
+          no_log: true
+
+        - name: Raw samples of the last {{ pr_minutes }} minutes
+          ansible.builtin.uri:
+            url: >-
+              {{ pr_ops }}/api/resources/{{ item.identifier }}/stats?{{ pr_stat_keys | map('urlencode')
+                 | map('regex_replace', '^', 'statKey=') | join('&') }}&begin={{ pr_begin_ms }}&end={{ pr_end_ms }}&rollUpType=MAX&intervalType=MINUTES&intervalQuantifier=1
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 400, 404, 500]
+          loop: "{{ pr_ds.results | map(attribute='json') | map(attribute='resourceList') | flatten }}"
+          loop_control:
+            label: "{{ item.resourceKey.name }} {{ item.identifier }}"
+          register: pr_stats
+          no_log: true
+
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          when: pr_tok.json.token is defined
+          no_log: true
+
+    - name: What was read
+      ansible.builtin.set_fact:
+        pr_result:
+          adapters: >-
+            {{ pr_adapter_full.results | map(attribute='json')
+               | map('community.general.json_query',
+                     '{id: id, name: resourceKey.name, monitoringInterval: monitoringInterval, collectorId: collectorId,
+                       lastCollected: lastCollected, lastHeartbeat: lastHeartbeat, messageFromAdapterInstance: messageFromAdapterInstance,
+                       numberOfResourcesCollected: numberOfResourcesCollected, keys: keys(@)}') | list }}
+          datastores: >-
+            {{ pr_ds.results | map(attribute='json') | map(attribute='resourceList') | flatten
+               | map('community.general.json_query', '{id: identifier, name: resourceKey.name, monitoringInterval: monitoringInterval,
+                     health: resourceHealth, status: resourceStatusStates, creationTime: creationTime,
+                     identifiers: resourceKey.resourceIdentifiers[].{name: identifierType.name, value: value}}') | list }}
+          samples: "{{ pr_rows }}"
+      vars:
+        pr_rows: >-
+          {% set rows = [] %}{% for r in pr_stats.results %}
+          {%- for v in (r.json | default({})).get('values', []) %}
+          {%- for s in v.get('stat-list', {}).get('stat', []) %}
+          {%- set ts = s.timestamps | default([]) %}
+          {%- set gaps = [] %}{% for i in range(1, ts | length) %}{% set _ = gaps.append(((ts[i] - ts[i - 1]) / 1000) | int) %}{% endfor %}
+          {%- set _ = rows.append({'datastore': r.item.resourceKey.name, 'id': r.item.identifier, 'key': s.statKey.key,
+                                   'status': r.status, 'count': ts | length, 'gaps_s': gaps,
+                                   'last': (s.data | default([]))[-12:],
+                                   'last_at': (ts[-12:] | map('int') | map('string') | list)}) %}
+          {%- endfor %}{% endfor %}
+          {%- if (r.json | default({})).get('values', []) | length == 0 %}
+          {%- set _ = rows.append({'datastore': r.item.resourceKey.name, 'id': r.item.identifier, 'status': r.status,
+                                   'message': (r.json | default({})).get('message', 'no values') ~ ' '
+                                              ~ ((r.json | default({})).get('validationFailures', []) | map(attribute='failureMessage') | join('; '))}) %}{% endif %}
+          {%- endfor %}{{ rows }}
+
+    - name: Output directory
+      ansible.builtin.file:
+        path: "{{ pr_out }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save what was read (no secrets)
+      ansible.builtin.copy:
+        content: "{{ pr_result | to_nice_json(indent=2) }}\n"
+        dest: "{{ pr_out }}/ops_collection.json"
+        mode: "0600"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          adapters: "{{ pr_result.adapters | map('community.general.json_query', '{name: name, interval_min: monitoringInterval, lastCollected: lastCollected}') | list }}"
+          datastores: "{{ pr_result.datastores | map('community.general.json_query', '{name: name, id: id, interval_min: monitoringInterval}') | list }}"
+          samples: "{{ pr_result.samples | map('community.general.json_query', '{ds: datastore, key: key, n: count, gaps_s: gaps_s, last: last, message: message}') | list }}"

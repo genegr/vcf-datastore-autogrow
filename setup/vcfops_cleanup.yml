@@ -1,0 +1,79 @@
+---
+# Cleanup (LAB CHANGE, gated) of the duplicate symptom definitions setup/vcfops.yml created on 2026-11-20: VCF Ops
+# stores names HTML-escaped ("&gt;="), so the create-if-missing check never matched "dsgrow - datastore used >= 80 %"
+# and every rerun created another copy (7 found by tests/probes/ops_dsgrow_objects.yml). Deletes ONLY symptom
+# definitions that are ours by every measure: the exact escaped name, adapter VMWARE / kind Datastore, key
+# capacity|usedSpacePct, and not referenced by any alert definition.
+#   bash tools/setup.sh setup/vcfops_cleanup.yml [--confirm vcfops_cleanup.yml]
+- name: Remove the duplicate dsgrow symptoms
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/eda.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  vars:
+    vc_api: "{{ dsgrow_vcfops_url }}/api"
+    vc_name: "dsgrow - datastore used &gt;= 80 %"
+  tasks:
+    - name: Token
+      ansible.builtin.uri:
+        url: "{{ vc_api }}/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: vc_tok
+      check_mode: false
+      no_log: true
+
+    - name: Clean up, then always release the token
+      block:
+        - name: Symptoms and alert definitions on Datastore (read)
+          ansible.builtin.uri:
+            url: "{{ vc_api }}/{{ item }}?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
+            headers: {Authorization: "OpsToken {{ vc_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+          loop: [symptomdefinitions, alertdefinitions]
+          register: vc_read
+          check_mode: false
+          no_log: true
+
+        - name: Ours, and unreferenced
+          ansible.builtin.set_fact:
+            vc_doomed: >-
+              {{ vc_read.results[0].json.symptomDefinitions | selectattr('name', 'equalto', vc_name)
+                 | selectattr('state.condition.key', 'equalto', 'capacity|usedSpacePct')
+                 | map(attribute='id') | reject('in', vc_used) | list }}
+          vars:
+            vc_used: "{{ vc_read.results[1].json.alertDefinitions | map(attribute='states') | flatten
+                         | map(attribute='base-symptom-set') | map(attribute='symptomDefinitionIds', default=[]) | flatten | list }}"
+
+        - name: What goes
+          ansible.builtin.debug:
+            msg: "{{ vc_doomed | length }} symptom definitions named '{{ vc_name }}': {{ vc_doomed }}"
+
+        - name: Delete
+          ansible.builtin.uri:
+            url: "{{ vc_api }}/symptomdefinitions/{{ item | urlencode }}"   # DELETE /api/symptomdefinitions/{id} (appliance REST docs)
+            method: DELETE
+            headers: {Authorization: "OpsToken {{ vc_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          loop: "{{ vc_doomed }}"
+          changed_when: true
+          when: not ansible_check_mode
+          no_log: true
+
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ vc_api }}/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ vc_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          check_mode: false
+          when: vc_tok.json.token is defined
+          no_log: true

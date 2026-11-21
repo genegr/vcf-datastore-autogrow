@@ -1,0 +1,103 @@
+---
+# In: fu_array (an entry of dsgrow_flasharrays), fu_user. Secrets and nested-vcf's token map are named by the
+# array's stable `key` (the alias), never by its Purity `name` (inventory flasharrays.yml).
+- name: "{{ fu_array.name }}: the stored token's variable"
+  ansible.builtin.set_fact:
+    fu_var: "dsgrow_secret_fa_token_{{ fu_array.key | regex_replace('[^A-Za-z0-9]', '_') | lower }}"
+
+- name: "{{ fu_array.name }}: current users (read)"
+  everpure.flasharray.purefa_info:
+    gather_subset: [admins]
+    fa_url: "{{ fu_array.url | regex_replace('^https?://', '') }}"
+    api_token: "{{ vault_array_tokens[fu_array.key] }}"
+    disable_warnings: true
+  register: fu_info
+  check_mode: false
+  no_log: true
+
+- name: "{{ fu_array.name }}: state"
+  ansible.builtin.set_fact:
+    fu_exists: "{{ fu_user in (fu_info.purefa_info.admins | default({})) }}"
+    fu_role: "{{ (fu_info.purefa_info.admins | default({})).get(fu_user, {}).role | default('') }}"
+    fu_have_token: "{{ lookup('ansible.builtin.vars', fu_var, default='') | length > 0 }}"
+
+- name: "{{ fu_array.name }}: what this run does"
+  ansible.builtin.debug:
+    msg: >-
+      user {{ fu_user }}: {{ 'exists (role ' ~ fu_role ~ ')' if fu_exists else 'will be created, role storage_admin' }};
+      token: {{ 'stored, nothing to do' if fu_have_token else 'will be issued and stored in .state/secrets/fa-' ~ fu_array.key ~ '.yml' }}
+
+- name: "{{ fu_array.name }}: an existing user must already be storage_admin (no silent role change)"
+  ansible.builtin.assert:
+    that: not fu_exists or fu_role == 'storage_admin'
+    fail_msg: "{{ fu_user }} exists on {{ fu_array.name }} with role {{ fu_role }}; fix it by hand or pick another name"
+    quiet: true
+
+- name: "{{ fu_array.name }}: create {{ fu_user }} (storage_admin) with an API token"
+  everpure.flasharray.purefa_user:
+    name: "{{ fu_user }}"
+    password: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+    role: storage_admin
+    api: true
+    fa_url: "{{ fu_array.url | regex_replace('^https?://', '') }}"
+    api_token: "{{ vault_array_tokens[fu_array.key] }}"
+    disable_warnings: true
+  register: fu_created
+  no_log: true
+  when: not fu_have_token and not ansible_check_mode
+
+# everpure.flasharray 1.46.0 returns the token itself as `user_info` (a string; "No API token created" when none),
+# not the user_info.user_api of its EXAMPLES (read in its source, 2026-11-19). With api: true an existing user's
+# token is rotated (old one deleted, new one issued), which is also how a token that was never stored is recovered.
+- name: "{{ fu_array.name }}: the array issued a token"
+  ansible.builtin.assert:
+    that:
+      - fu_created.user_info is string
+      - fu_created.user_info | length > 0
+      - fu_created.user_info != 'No API token created'
+    fail_msg: "{{ fu_array.name }}: no API token returned (changed={{ fu_created.changed | default('?') }})"
+    quiet: true
+  when: fu_created is not skipped
+
+- name: "{{ fu_array.name }}: store the token"
+  ansible.builtin.include_tasks: secret_write.yml
+  vars:
+    dsgrow_secret_name: "fa-{{ fu_array.key }}"
+    dsgrow_secret_data: "{{ {fu_var: fu_created.user_info} }}"
+  when: fu_created is not skipped
+
+- name: "{{ fu_array.name }}: reload the secrets"
+  ansible.builtin.include_tasks: secrets_load.yml
+  when: not ansible_check_mode
+
+# Read-back through the module (no direct REST, owner 2026-11-20): the stored token authenticates, and with the array
+# admin token the user is listed as storage_admin. purefa_info cannot tell which user a token belongs to.
+- name: "{{ fu_array.name }}: read-back - the stored token authenticates"
+  everpure.flasharray.purefa_info:
+    gather_subset: [minimum]
+    fa_url: "{{ fu_array.url | regex_replace('^https?://', '') }}"
+    api_token: "{{ lookup('ansible.builtin.vars', fu_var) }}"
+    disable_warnings: true
+  register: fu_login
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: "{{ fu_array.name }}: read-back - {{ fu_user }} is storage_admin"
+  everpure.flasharray.purefa_info:
+    gather_subset: [admins]
+    fa_url: "{{ fu_array.url | regex_replace('^https?://', '') }}"
+    api_token: "{{ vault_array_tokens[fu_array.key] }}"
+    disable_warnings: true
+  register: fu_after
+  check_mode: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: "{{ fu_array.name }}: the token works and {{ fu_user }} is storage_admin"
+  ansible.builtin.assert:
+    that:
+      - fu_login is succeeded
+      - (fu_after.purefa_info.admins | default({})).get(fu_user, {}).role | default('') == 'storage_admin'
+    fail_msg: "{{ fu_array.name }}: {{ fu_user }} is not storage_admin after the run"
+    success_msg: "{{ fu_array.name }}: the stored token authenticates; {{ fu_user }} is storage_admin"
+  when: not ansible_check_mode

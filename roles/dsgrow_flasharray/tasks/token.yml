@@ -1,0 +1,7 @@
+---
+# In: dsgrow_fa_array (an entry of dsgrow_flasharrays). The modules take the token as api_token (a no_log parameter).
+- name: "{{ dsgrow_fa_array.name }}: the API token is available (vault or {{ dsgrow_fa_array.token_env }})"
+  ansible.builtin.assert:
+    that: dsgrow_fa_token | length > 0
+    fail_msg: "no dsgrow API token for {{ dsgrow_fa_array.name }} (vault or environment variable {{ dsgrow_fa_array.token_env }})"
+    quiet: true

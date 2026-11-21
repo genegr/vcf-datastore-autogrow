@@ -1,0 +1,98 @@
+---
+# Read-only (also in --check): where the demo volume is connected (owner 2026-11-20):
+#   1. each demo ESXi host's NVMe host NQN, read on the host itself: `esxcli nvme info get` as root over SSH through
+#      the router, with nested-vcf's keys (read-only use, as nested-vcf's roles/esx_verify does). vCenter has no host
+#      NQN field: tests/probes/esx_nqn.yml found only the array's target NQN there.
+#   2. the FlashArray host object that carries that NQN: exactly one per ESXi host
+#   3. all of them in ONE host group whose members are exactly these hosts -> connect the volume to that host group;
+#      none of them in a host group -> connect it to each host object (private connections); anything else (some in
+#      a group, different groups, a group with other hosts too) -> refuse: the volume would reach hosts outside
+#      the demo cluster, or be half-presented
+# Accepted (owner 2026-11-20): with the host group, nested-vcf's wld_array read-back (the group provisions exactly its
+# model's sizes) fails while the demo volume exists; nested-vcf changes nothing because of it.
+# Needs dd_hosts and dd_hgroups (tasks/read.yml). Out: dd_attach = {mode: hgroup, hgroup, hosts, nqns} or
+# {mode: hosts, hosts, nqns}.
+# The router resolves names with an upstream DNS that has no lab zone (2026-11-20: NXDOMAIN for esx07.vcf9-1.lab), so
+# SSH goes to each host's management address, vmk0, as vCenter reports it (nested-vcf connects to the same address)
+- name: Management address (vmk0) of each demo host, from vCenter
+  community.vmware.vmware_host_facts:
+    esxi_hostname: "{{ item }}"
+  loop: "{{ dd.esx_hosts }}"
+  register: da_facts
+  check_mode: false
+
+- name: NVMe host NQN of each demo host (esxcli over SSH through the router, read-only)
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - "{{ dd_esx_key }}"
+      - -o
+      - BatchMode=yes
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - LogLevel=ERROR
+      - -o
+      - ConnectTimeout=20
+      - -o
+      - >-
+        ProxyCommand=ssh -i {{ dd_router_key }} -o BatchMode=yes -o UserKnownHostsFile=/dev/null
+        -o StrictHostKeyChecking=no -o LogLevel=ERROR -W %h:%p vyos@{{ dd.router }}
+      - "root@{{ item.ansible_facts.ansible_vmk0.ipv4.address }}"
+      - esxcli nvme info get
+  loop: "{{ da_facts.results }}"
+  loop_control:
+    label: "{{ item.item }} {{ item.ansible_facts.ansible_vmk0.ipv4.address }}"
+  register: da_nqn
+  changed_when: false
+  failed_when: false          # reported below with the host's name
+  check_mode: false
+
+- name: Each ESXi host's NQN and its host object on {{ dd.array }}
+  ansible.builtin.set_fact:
+    da_map: >-
+      {% set out = [] %}{% for r in da_nqn.results %}
+      {%- set m = (r.stdout | default('')) | regex_findall('Host NQN:\s*(\S+)') %}
+      {%- set nqn = m[0] if m else '' %}
+      {%- set fa = [] %}{% for n, h in dd_hosts.items() %}{% if nqn and nqn in (h.nqn | default([]) or []) %}{% set _ = fa.append(n) %}{% endif %}{% endfor %}
+      {%- set _ = out.append({'esx': r.item.item, 'nqn': nqn, 'rc': r.rc | default(-1),
+                              'err': (r.stderr | default('') | trim | truncate(200)),
+                              'fa_hosts': fa,
+                              'hgroup': ((dd_hosts[fa[0]].hgroup | default('', true)) if fa | length == 1 else '')}) %}
+      {%- endfor %}{{ out }}
+
+- name: Host group or host objects
+  ansible.builtin.set_fact:
+    da_problems: >-
+      {% set out = [] %}{% for e in da_map %}
+      {%- if not e.nqn %}{% set _ = out.append(e.esx ~ ': no host NQN read (rc ' ~ e.rc ~ ' ' ~ e.err ~ ')') %}
+      {%- elif e.fa_hosts | length != 1 %}
+      {%- set _ = out.append(e.esx ~ ' (' ~ e.nqn ~ ') is carried by ' ~ e.fa_hosts | length ~ ' host objects on ' ~ dd.array ~ ' ' ~ e.fa_hosts) %}{% endif %}
+      {%- endfor %}
+      {%- if not out %}
+      {%- set hosts = da_map | map(attribute='fa_hosts') | map('join', ',') | list | sort %}
+      {%- set groups = da_map | map(attribute='hgroup') | unique | list %}
+      {%- if groups | length > 1 %}
+      {%- set _ = out.append('the host objects are in different host groups (or some in none): ' ~ dict(hosts | zip(da_map | map(attribute='hgroup')))) %}
+      {%- elif groups[0] and (dd_hgroups.get(groups[0], {}).hosts | default([]) | sort) != hosts %}
+      {%- set _ = out.append('host group ' ~ groups[0] ~ ' has hosts ' ~ dd_hgroups.get(groups[0], {}).hosts | default([]) ~ ', not exactly ' ~ hosts) %}{% endif %}
+      {%- endif %}{{ out }}
+    dd_attach: >-
+      {% set hosts = da_map | map(attribute='fa_hosts') | map('join', ',') | list | sort %}
+      {%- set groups = da_map | map(attribute='hgroup') | unique | list %}
+      {%- set nqns = dict(da_map | map(attribute='esx') | zip(da_map | map(attribute='nqn'))) %}
+      {{- {'mode': 'hgroup', 'hgroup': groups[0], 'hosts': hosts, 'nqns': nqns}
+          if (groups | length == 1 and groups[0]) else {'mode': 'hosts', 'hosts': hosts, 'nqns': nqns} }}
+
+- name: Where {{ dd.volume }} is connected
+  ansible.builtin.assert:
+    that: da_problems | length == 0
+    fail_msg: "cannot tell where to connect {{ dd.volume }}: {{ da_problems }}"
+    success_msg: >-
+      {{ ('host group ' ~ dd_attach.hgroup ~ ' (exactly ' ~ dd_attach.hosts | join(', ') ~ ')') if dd_attach.mode == 'hgroup'
+         else ('each host object, privately (in no host group): ' ~ dd_attach.hosts | join(', ')) }};
+      NQNs {{ dd_attach.nqns }}
+    quiet: false

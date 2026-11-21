@@ -1,0 +1,62 @@
+---
+# Read-only: wait until VCF Operations knows THIS demo datastore; the alert definition can only fire on a resource it
+# has discovered. Matched by the datastore's identity, never by its name: its vCenter moref and the vCenter's instance
+# UUID, which are VCF Ops' own uniqueness identifiers for a datastore (VMEntityObjectID, VMEntityVCID). VCF Ops keeps
+# removed demo datastores as resources of the same name (resourceState NOT_EXISTING), so the first, name-based wait
+# never succeeded after a reset (2026-11-20). Measured: discovered within a minute (1-minute collection).
+# Needs dv_moid and dv_vcenter_uuid (what init recorded for the datastore it made).
+- name: VCF Ops token (local admin)
+  ansible.builtin.uri:
+    url: "{{ dsgrow_vcfops_url }}/api/auth/token/acquire"
+    method: POST
+    body_format: json
+    body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+    headers: {Accept: application/json}
+    validate_certs: false
+  register: dv_tok
+  check_mode: false
+  no_log: true
+
+- name: Wait, then always release the token
+  block:
+    - name: VCF Ops resource of datastore {{ dv_moid }} (vCenter {{ dv_vcenter_uuid }})
+      ansible.builtin.uri:
+        url: "{{ dsgrow_vcfops_url }}/api/resources?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
+        headers: {Authorization: "OpsToken {{ dv_tok.json.token }}", Accept: application/json}
+        validate_certs: false
+      register: dv_res
+      until: dv_res.json is defined and (dv_res.json | community.general.json_query(dv_query) | length) == 1
+      retries: 40
+      delay: 15
+      check_mode: false
+      no_log: true
+      vars: &dv_vars
+        # the resources that carry BOTH identifiers (VCF Ops stores them lowercase, as vCenter reports them)
+        dv_query: >-
+          resourceList[?resourceKey.resourceIdentifiers[?identifierType.name=='VMEntityObjectID' && value=='{{ dv_moid }}']]
+          | [?resourceKey.resourceIdentifiers[?identifierType.name=='VMEntityVCID' && value=='{{ dv_vcenter_uuid | lower }}']]
+          .{id: identifier, name: resourceKey.name, states: resourceStatusStates[].resourceState}
+
+    - name: The resource
+      ansible.builtin.set_fact:
+        dv_live: "{{ dv_res.json | community.general.json_query(dv_query) }}"
+      vars: *dv_vars
+
+    - name: Known to VCF Ops and collected
+      ansible.builtin.assert:
+        that: dv_live | length == 1 and 'STARTED' in dv_live[0].states
+        fail_msg: "VCF Ops resources of {{ dv_moid }} / {{ dv_vcenter_uuid }}: {{ dv_live | to_json }}"
+        success_msg: "VCF Ops resource {{ dv_live[0].id }} = {{ dv_live[0].name }} ({{ dv_moid }}, vCenter {{ dv_vcenter_uuid }})"
+        quiet: false
+
+  always:
+    - name: Release the VCF Ops token
+      ansible.builtin.uri:
+        url: "{{ dsgrow_vcfops_url }}/api/auth/token/release"
+        method: POST
+        headers: {Authorization: "OpsToken {{ dv_tok.json.token }}", Accept: application/json}
+        validate_certs: false
+        status_code: [200, 204]
+      check_mode: false
+      changed_when: false
+      no_log: true

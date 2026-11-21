@@ -1,0 +1,76 @@
+---
+# READ-ONLY: where the demo is (skill dsgrow-demo): the datastore's fill, the FlashArray volume, the guest's fill
+# unit, dsgrow's lock and the latest request for the demo datastore. Safe at any time.
+#   bash tools/probe.sh tests/probes/demo_status.yml
+- name: Demo status
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware: &dd_vc_args
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+    dsgrow_datastore_backing: *dd_vc_args
+    group/everpure.flasharray.everpure.flasharray:
+      fa_url: "{{ dd_fa_url }}"
+      api_token: "{{ dsgrow_fa_token }}"
+      disable_warnings: true
+  tasks:
+    - name: Load the dsgrow secrets
+      ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml
+
+    - name: Read the demo's objects
+      ansible.builtin.include_tasks: /work/demo/tasks/read.yml
+
+    - name: The dsgrow lock
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_read
+      vars:
+        dsgrow_vc: "{{ dd_vc }}"
+        dsgrow_datastore_name: "{{ dd.datastore }}"
+
+    - name: Status
+      ansible.builtin.debug:
+        msg:
+          datastore: >-
+            {{ ('%s: %.1f %% used (%s of %s)' % (dd.datastore, dd_ds.datastore.used_bytes * 100.0 / dd_ds.datastore.capacity_bytes,
+                dd_ds.datastore.used_bytes | dsgrow_human_bytes, dd_ds.datastore.capacity_bytes | dsgrow_human_bytes))
+               if dd_ds.matches == 1 else 'absent' }}
+          volume: "{{ (dd_vol.size | dsgrow_human_bytes) if dd_has_vol else 'absent' }}"
+          lock: "{{ dsgrow_lock if dsgrow_lock else 'none' }}"
+
+    - name: The guest for SSH
+      ansible.builtin.include_tasks: /work/demo/tasks/guest_host.yml
+      when: dd_has_vm and dd_vm.hw_power_status == 'poweredOn'
+
+- name: Demo status - the fill
+  hosts: dsgrow_demo_guest
+  gather_facts: false
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+  tasks:
+    - name: The data disk in the guest
+      ansible.builtin.shell: |
+        set -o pipefail
+        df -h {{ dd.data_mount }} 2>/dev/null | tail -1 || echo "{{ dd.data_mount }} not mounted"
+      register: dg_fill
+      args:
+        executable: /bin/bash
+      changed_when: false
+      check_mode: false
+
+    - name: Fill
+      ansible.builtin.debug:
+        var: dg_fill.stdout_lines

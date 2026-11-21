@@ -1,0 +1,38 @@
+---
+# READ-ONLY: the Purity identity of each configured FlashArray (inventory flasharrays.yml): array name, model,
+# Purity version, id, management URL. The inventory names (z-x70-a, ...) are aliases; Purity's own names differ
+# (nested-vcf sites/cto.yaml: z-x90-a is z-fastaines-d).
+#   bash tools/probe.sh tests/probes/fa_identity.yml
+- name: FlashArray identities
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+  tasks:
+    - name: Load the dsgrow secrets
+      ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml
+
+    - name: Each array's identity
+      everpure.flasharray.purefa_info:
+        fa_url: "{{ item.url | regex_replace('^https?://', '') }}"
+        api_token: "{{ dsgrow_fa_token }}"
+        disable_warnings: true
+        gather_subset: [minimum]
+      vars:
+        dsgrow_fa_array: "{{ item }}"
+      loop: "{{ dsgrow_flasharrays }}"
+      loop_control:
+        label: "{{ item.name }} {{ item.url }}"
+      register: fi_info
+      no_log: true
+      failed_when: false
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ fi_info.results | map('community.general.json_query',
+             '{inventory: item.name, url: item.url, array_name: purefa_info.default.array_name,
+               model: purefa_info.default.array_model, purity: purefa_info.default.purity_version,
+               error: msg}') | list }}

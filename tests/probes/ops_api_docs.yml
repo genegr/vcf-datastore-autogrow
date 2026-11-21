@@ -1,0 +1,96 @@
+---
+# READ-ONLY probe: the shapes setup/vcfops.yml needs and ops_read.yml could not sample (no instances exist yet):
+#   - the WebhookPlugin type's config fields (GET /api/alertplugins/types/WebhookPlugin)
+#   - the notification rule, outbound instance and template request models from the appliance's own API docs
+# GETs plus token acquire / release only.
+#   bash tools/probe.sh tests/probes/ops_api_docs.yml
+# Output: .state/probes/ops_api_docs/ (raw; no secrets).
+- name: VCF Operations API shapes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    nvcf: /nvcf
+    pr_base: https://ops.vcf9-1.lab
+    pr_out: /work/.state/probes/ops_api_docs
+    pr_docs:
+      - /suite-api/docs/rest/index.html
+      - /suite-api/docs/rest/application.wadl
+      - /suite-api/api/swagger.json
+      - /suite-api/doc/swagger.json
+      - /suite-api/docs/swagger.json
+      - /suite-api/api-docs
+      - /suite-api/v3/api-docs
+  vars_files:
+    - "{{ nvcf }}/labs/vcf9-1.vault.yml"
+  tasks:
+    - name: Output directory
+      ansible.builtin.file:
+        path: "{{ pr_out }}"
+        state: directory
+        mode: "0700"
+
+    - name: Token for the local admin
+      ansible.builtin.uri:
+        url: "{{ pr_base }}/suite-api/api/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: pr_tok
+      no_log: true
+
+    - name: Read, then always release the token
+      block:
+        - name: The WebhookPlugin type
+          ansible.builtin.uri:
+            url: "{{ pr_base }}/suite-api/api/alertplugins/types/WebhookPlugin"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            return_content: true
+          register: pr_type
+          no_log: true
+
+        - name: API docs (status and body saved)
+          ansible.builtin.uri:
+            url: "{{ pr_base }}{{ item }}"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}"}
+            validate_certs: false
+            return_content: true
+            status_code: [200, 301, 302, 401, 403, 404]
+            follow_redirects: safe
+          loop: "{{ pr_docs }}"
+          register: pr_doc
+          no_log: true
+
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ pr_base }}/suite-api/api/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          when: pr_tok.json.token is defined
+          no_log: true
+
+    - name: Save the type
+      ansible.builtin.copy:
+        content: "{{ pr_type.json | to_nice_json(indent=2) }}"
+        dest: "{{ pr_out }}/webhookplugin-type.json"
+        mode: "0600"
+
+    - name: Save the docs that answered 200
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ pr_out }}/{{ item.item | regex_replace('[^A-Za-z0-9.]+', '_') }}"
+        mode: "0600"
+      loop: "{{ pr_doc.results | selectattr('status', 'equalto', 200) | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "docs: {{ pr_doc.results | map(attribute='item') | zip(pr_doc.results | map(attribute='status')) | list }}"
+          - "WebhookPlugin config: {{ pr_type.json | to_json | truncate(1500) }}"

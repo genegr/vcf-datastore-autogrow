@@ -1,0 +1,53 @@
+---
+# READ-ONLY: the demo VM's disks as vCenter has them (provisioning, datastore, size, host) and the demo datastore's
+# used space as vCenter reports it now, without any refresh (nothing is changed).
+#   bash tools/probe.sh tests/probes/demo_disk.yml
+- name: Demo disk
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware: &dd_vc_args
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+    dsgrow_datastore_backing: *dd_vc_args
+  tasks:
+    - name: The VM's disks
+      community.vmware.vmware_guest_disk_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+      register: pd_disks
+
+    - name: The VM
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+      register: pd_vm
+
+    - name: The datastore (vCenter's figures, no refresh)
+      dsgrow_datastore_backing:
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+      register: pd_ds
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          host: "{{ pd_vm.instance.hw_esxi_host }}"
+          datastore: >-
+            {{ dd.datastore }} used {{ pd_ds.datastore.used_bytes | dsgrow_human_bytes }} of
+            {{ pd_ds.datastore.capacity_bytes | dsgrow_human_bytes }}
+            ({{ (pd_ds.datastore.used_bytes * 100.0 / pd_ds.datastore.capacity_bytes) | round(1) }} %)
+          disks: >-
+            {{ pd_disks.guest_disk_info.values() | map('community.general.json_query',
+               '{label: label, unit: unit_number, file: backing_filename, gib: capacity_in_kb, thin: backing_thinprovisioned,
+                 eager: backing_eagerlyscrub, writethrough: backing_writethrough, type: backing_type}') | list }}

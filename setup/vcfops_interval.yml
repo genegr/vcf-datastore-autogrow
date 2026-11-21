@@ -1,0 +1,160 @@
+---
+# Step 13 (LAB CHANGE, gated): the collection interval of ONE VCF Operations vCenter adapter instance
+# (dsgrow_vcfops_interval_adapter, the demo domain's vcenter-w02) from 5 minutes to dsgrow_vcfops_interval_min (1),
+# so the "dsgrow - datastore capacity" alert comes within about a minute of the demo datastore crossing 80 %
+# (owner 2026-11-20: the demo cannot wait 5 minutes). Measured first by tests/probes/ops_collection.yml: every
+# VMWARE adapter instance at monitoringInterval 5, samples every 300 s.
+# How: GET /api/adapters/{id}, drop the read-only status fields, change monitoringInterval only, PUT /api/adapters
+# (updateAdapterInstance), GET again: the interval is the target and resourceKey, collectorId and the credential are
+# unchanged. Nothing else in VCF Ops is touched. Rerun: changed=0.
+# Rollback: bash tools/setup.sh setup/vcfops_interval.yml --confirm vcfops_interval.yml -e dsgrow_vcfops_interval_min=5
+#   bash tools/setup.sh setup/vcfops_interval.yml [--confirm vcfops_interval.yml]
+- name: VCF Operations - collection interval of the demo's vCenter adapter
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/eda.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  vars:
+    vi_api: "{{ dsgrow_vcfops_url }}/api"
+    vi_target: "{{ dsgrow_vcfops_interval_min | int }}"
+    # status fields of the GET that are not part of the adapter instance's configuration
+    vi_read_only: [numberOfMetricsCollected, numberOfResourcesCollected, lastHeartbeat, lastCollected,
+                   messageFromAdapterInstance, links]
+  tasks:
+    - name: The target is a sane interval (1-60 minutes)
+      ansible.builtin.assert:
+        that: vi_target | int >= 1 and vi_target | int <= 60
+        fail_msg: "dsgrow_vcfops_interval_min={{ dsgrow_vcfops_interval_min }}: want 1-60 minutes"
+        quiet: true
+
+    - name: Token for the local admin
+      ansible.builtin.uri:
+        url: "{{ vi_api }}/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: vi_tok
+      check_mode: false
+      no_log: true
+
+    - name: Change, then always release the token
+      block:
+        - name: Session headers
+          ansible.builtin.set_fact:
+            vi_h: {Authorization: "OpsToken {{ vi_tok.json.token }}", Accept: application/json}
+          no_log: true
+
+        - name: The VMWARE adapter instances
+          ansible.builtin.uri:
+            url: "{{ vi_api }}/adapters?adapterKindKey=VMWARE"
+            headers: "{{ vi_h }}"
+            validate_certs: false
+          register: vi_list
+          check_mode: false
+          no_log: true
+
+        - name: Exactly one adapter instance named {{ dsgrow_vcfops_interval_adapter }}
+          ansible.builtin.set_fact:
+            vi_match: >-
+              {{ vi_list.json.adapterInstancesInfoDto | default([])
+                 | selectattr('resourceKey.name', 'equalto', dsgrow_vcfops_interval_adapter) | map(attribute='id') | list }}
+
+        - name: Found once
+          ansible.builtin.assert:
+            that: vi_match | length == 1
+            fail_msg: >-
+              {{ vi_match | length }} adapter instances named {{ dsgrow_vcfops_interval_adapter }}; there are
+              {{ vi_list.json.adapterInstancesInfoDto | default([]) | map(attribute='resourceKey.name') | list }}
+            quiet: true
+
+        - name: The adapter instance now
+          ansible.builtin.uri:
+            url: "{{ vi_api }}/adapters/{{ vi_match[0] }}"
+            headers: "{{ vi_h }}"
+            validate_certs: false
+          register: vi_before
+          check_mode: false
+          no_log: true
+
+        - name: The change
+          ansible.builtin.set_fact:
+            vi_body: >-
+              {{ vi_before.json | dict2items | rejectattr('key', 'in', vi_read_only) | items2dict
+                 | combine({'monitoringInterval': vi_target | int}) }}
+            vi_from: "{{ vi_before.json.monitoringInterval }}"
+
+        - name: "{{ dsgrow_vcfops_interval_adapter }}: collection interval {{ vi_from }} -> {{ vi_target }} min"
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'nothing to do: already ' ~ vi_from ~ ' min' if vi_from | int == vi_target | int else
+                 'PUT /api/adapters id ' ~ vi_match[0] ~ ': monitoringInterval ' ~ vi_from ~ ' -> ' ~ vi_target ~
+                 ' (resourceKey, collectorId ' ~ vi_before.json.collectorId | default('?') ~ ' and credential unchanged; last collected ' ~
+                 ('%H:%M:%SZ' | strftime((vi_before.json.lastCollected | default(0) | int / 1000) | int, utc=true)) ~ ')' }}
+          changed_when: vi_from | int != vi_target | int
+
+        - name: Update the adapter instance
+          ansible.builtin.uri:
+            url: "{{ vi_api }}/adapters"
+            method: PUT
+            headers: "{{ vi_h | combine({'Content-Type': 'application/json'}) }}"
+            body_format: json
+            body: "{{ vi_body }}"
+            validate_certs: false
+            status_code: [200, 400, 401, 403, 404, 500]
+          register: vi_put
+          when: vi_from | int != vi_target | int and not ansible_check_mode
+          changed_when: true
+          no_log: true          # the token is in the headers; checked next
+
+        - name: Check the update (status and VCF Ops' message only)
+          ansible.builtin.assert:
+            that: vi_put.status == 200
+            fail_msg: >-
+              HTTP {{ vi_put.status | default('?') }} {{ (vi_put.json | default({})).message | default(vi_put.msg | default('')) | string | truncate(500) }}
+              {{ ((vi_put.json | default({})).validationFailures | default([])) | map(attribute='failureMessage') | join('; ') }}
+            quiet: true
+          when: vi_from | int != vi_target | int and not ansible_check_mode
+
+        - name: The adapter instance after
+          ansible.builtin.uri:
+            url: "{{ vi_api }}/adapters/{{ vi_match[0] }}"
+            headers: "{{ vi_h }}"
+            validate_certs: false
+          register: vi_after
+          check_mode: false
+          no_log: true
+          when: not ansible_check_mode
+
+        - name: Read back - the target interval, the rest as it was
+          ansible.builtin.assert:
+            that:
+              - vi_after.json.monitoringInterval | int == vi_target | int
+              - vi_after.json.resourceKey == vi_before.json.resourceKey
+              - vi_after.json.collectorId | default('') == vi_before.json.collectorId | default('')
+              - vi_after.json.credentialInstanceId | default('') == vi_before.json.credentialInstanceId | default('')
+            fail_msg: >-
+              {{ dsgrow_vcfops_interval_adapter }} after the update: interval {{ vi_after.json.monitoringInterval | default('?') }},
+              collector {{ vi_after.json.collectorId | default('?') }}, resourceKey
+              {{ 'same' if vi_after.json.resourceKey == vi_before.json.resourceKey else 'CHANGED' }}, credential
+              {{ 'same' if vi_after.json.credentialInstanceId | default('') == vi_before.json.credentialInstanceId | default('') else 'CHANGED' }}
+            success_msg: >-
+              {{ dsgrow_vcfops_interval_adapter }}: collection interval {{ vi_after.json.monitoringInterval }} min;
+              adapter message: {{ vi_after.json.messageFromAdapterInstance | default('none') | string | truncate(200) }}
+            quiet: false
+          when: not ansible_check_mode
+
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ vi_api }}/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ vi_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          when: vi_tok.json.token is defined
+          check_mode: false
+          no_log: true

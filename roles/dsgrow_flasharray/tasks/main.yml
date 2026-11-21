@@ -1,0 +1,10 @@
+---
+# FlashArray through the everpure.flasharray modules only (owner 2026-11-20), never direct REST. 1.46.0 needs the
+# issue #1103 fix that docker/eda.Dockerfile applies (docker/patches/; skill flasharray-volume-extend). Entry points
+# (tasks_from):
+#   find    every array in dsgrow_flasharrays: the volume with serial dsgrow_fa_serial -> dsgrow_fa_matches (read-only)
+#   extend  the matched volume to dsgrow_target_bytes when smaller, then verify (THE write; execute.yml only)
+# Only purefa_info (read) and one purefa_volume with `size` (grow) are used here (safety review).
+- name: Use tasks_from
+  ansible.builtin.fail:
+    msg: "roles/dsgrow_flasharray has no main entry point; use tasks_from find or extend"

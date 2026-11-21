@@ -1,0 +1,72 @@
+---
+# READ-ONLY probe (docs before design; CLAUDE.md rule 2, skill flasharray-volume-extend): does the NVMe device ID
+# ESX shows for a FlashArray volume (eui.<NGUID>, recorded by nested-vcf roles/lab_array) map to the volume's serial
+# as plugins/filter/dsgrow.py assumes (eui.00 + serial[0:14] + 24a937 + serial[14:24])?
+# Also records the REST versions and which /arrays/space fields the arrays return (total_used / total_physical).
+# Only GETs plus login/logout. Uses nested-vcf's array tokens (read-only use) and its array records.
+#   bash tools/probe.sh tests/probes/eui_serial.yml
+# Output: .state/probes/eui_serial.json (no secrets).
+- name: EUI <-> serial on the lab arrays
+  hosts: localhost
+  gather_facts: false
+  vars:
+    nvcf: /nvcf
+    pr_records: [array.json, array-w01.json, array-w02.json]
+    pr_out: /work/.state/probes
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - "{{ nvcf }}/labs/arrays.vault.yml"
+  tasks:
+    - name: The array records of nested-vcf
+      ansible.builtin.set_fact:
+        pr_recs: >-
+          {{ pr_recs | default([]) + [lookup('ansible.builtin.file', nvcf ~ '/.state/labs/vcf9-1/' ~ item) | from_json] }}
+      loop: "{{ pr_records }}"
+
+    - name: Volumes per array
+      ansible.builtin.set_fact:
+        pr_by_array: >-
+          {% set out = {} %}{% for r in pr_recs %}{% set _ = out.setdefault(r.array, {}).update(r.nguid | default({})) %}{% endfor %}{{ out }}
+
+    - name: Read each array
+      ansible.builtin.include_tasks: eui_serial_array.yml
+      loop: "{{ pr_by_array | dict2items }}"
+      loop_control:
+        loop_var: pr_item
+        label: "{{ pr_item.key }}: {{ pr_item.value | list }}"
+
+    - name: Compare
+      ansible.builtin.set_fact:
+        pr_rows: >-
+          {% set rows = [] %}{% for a in pr_results %}{% for v in a.volumes %}
+          {%- set nguid = pr_by_array[a.array][v.name] %}
+          {%- set derived = (nguid | dsgrow_device_to_fa_serial) if (nguid | dsgrow_is_everpure_device) else 'NOT-EVERPURE-LAYOUT' %}
+          {%- set _ = rows.append({'array': a.array, 'volume': v.name, 'nguid': nguid, 'serial': v.serial,
+                                   'derived_serial': derived, 'match': derived == v.serial,
+                                   'back_to_eui': (v.serial | dsgrow_fa_serial_to_device('eui')) == nguid}) %}
+          {%- endfor %}{% endfor %}{{ rows }}
+
+    - name: Output directory
+      ansible.builtin.file:
+        path: "{{ pr_out }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save (no secrets)
+      ansible.builtin.copy:
+        content: >-
+          {{ {'rows': pr_rows,
+              'arrays': pr_results | map('dict2items') | map('rejectattr', 'key', 'equalto', 'volumes') | map('items2dict') | list}
+             | to_nice_json(indent=2) }}
+        dest: "{{ pr_out }}/eui_serial.json"
+        mode: "0600"
+
+    - name: Result
+      ansible.builtin.assert:
+        that:
+          - pr_rows | length > 0
+          - pr_rows | rejectattr('match') | list | length == 0
+          - pr_rows | rejectattr('back_to_eui') | list | length == 0
+        success_msg: "eui layout proven on {{ pr_rows | length }} volumes: {{ pr_rows | map(attribute='volume') | list }}"
+        fail_msg: "{{ pr_rows | rejectattr('match') | list }}"

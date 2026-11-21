@@ -1,0 +1,19 @@
+---
+# The lab's workload-domain vCenters (nested-vcf labs/vcf9-1.yaml, lab_model.py). `adapter_instances`: what VCF Ops may
+# send as ${ADAPTER_INSTANCE} for this vCenter (tests/probes/ops_read.yml reads the real value; add it here). The
+# password comes from the environment variable named by password_env (the dsgrow vault -> env file), never from here.
+dsgrow_vcenters:
+  - key: w01
+    hostname: vcenter-w01.vcf9-1.lab
+    datacenter: vcf9-1-w01-dc
+    username: dsgrow@w01.everpure.demo
+    password_env: DSGROW_VC_PASSWORD_W01
+    validate_certs: false
+    adapter_instances: [vcenter-w01.vcf9-1.lab, vcenter-w01, "{{ dsgrow_site.vcenter_ip.w01 }}"]
+  - key: w02
+    hostname: vcenter-w02.vcf9-1.lab
+    datacenter: vcf9-1-w02-dc
+    username: dsgrow@w02.everpure.demo
+    password_env: DSGROW_VC_PASSWORD_W02
+    validate_certs: false
+    adapter_instances: [vcenter-w02.vcf9-1.lab, vcenter-w02, "{{ dsgrow_site.vcenter_ip.w02 }}"]

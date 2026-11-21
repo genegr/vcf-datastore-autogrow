@@ -1,0 +1,26 @@
+---
+# In: dsgrow_alert (the VCF Ops payload, schema dsgrow.vcfops.v1).
+# Out: dsgrow_datastore_name, dsgrow_vc_candidates (the vCenter adapter_instance names, else every configured one;
+#      pick_vcenter.yml then keeps the one that has the datastore).
+# Only identifiers are taken from the payload (rule 4); the rulebook already filtered, this re-checks.
+- name: The payload is a dsgrow.vcfops.v1 datastore alert
+  ansible.builtin.assert:
+    that:
+      - dsgrow_alert is mapping
+      - dsgrow_alert.schema | default('') == 'dsgrow.vcfops.v1'
+      - dsgrow_alert.resource_kind | default('') == 'Datastore'
+      - dsgrow_alert.resource_name | default('') is match('^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$')
+    fail_msg: >-
+      not a usable datastore alert: schema={{ dsgrow_alert.schema | default('?') }},
+      kind={{ dsgrow_alert.resource_kind | default('?') }},
+      name={{ dsgrow_alert.resource_name | default('?') | string | truncate(80) }}
+    quiet: true
+
+# ${ADAPTER_INSTANCE} may be absent or render differently in VCF Ops 9.1.1 (skill vcf-ops-webhook): when it names
+# no configured vCenter, every configured vCenter is a candidate and the datastore must exist in exactly one.
+- name: Candidate vCenters
+  ansible.builtin.set_fact:
+    dsgrow_datastore_name: "{{ dsgrow_alert.resource_name }}"
+    dsgrow_vc_candidates: >-
+      {{ (dsgrow_vcenters | selectattr('adapter_instances', 'contains', dsgrow_alert.adapter_instance | default('')) | list)
+         or dsgrow_vcenters }}

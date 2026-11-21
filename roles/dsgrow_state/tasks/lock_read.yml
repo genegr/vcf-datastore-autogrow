@@ -1,0 +1,24 @@
+---
+# In: dsgrow_vc.hostname, dsgrow_datastore_name. Out: dsgrow_lock ({} when none), dsgrow_lock_held (bool).
+# Held: proposed / executing (a request), cleaning (demo/cleanup.yml removes the datastore), until it expires.
+- name: Lock file of {{ dsgrow_datastore_name }}
+  ansible.builtin.stat:
+    path: "{{ dsgrow_lock_path }}"
+  register: dsgrow_lock_stat
+  vars:
+    dsgrow_lock_path: "{{ dsgrow_state_dir }}/locks/{{ dsgrow_vc.hostname | dsgrow_lock_name(dsgrow_datastore_name) }}.json"
+
+- name: Read the lock
+  ansible.builtin.slurp:
+    src: "{{ dsgrow_lock_stat.stat.path }}"
+  register: dsgrow_lock_raw
+  when: dsgrow_lock_stat.stat.exists
+
+- name: Lock state
+  ansible.builtin.set_fact:
+    dsgrow_lock: "{{ dsgrow_lock_data }}"
+    dsgrow_lock_held: >-
+      {{ dsgrow_lock_data.status | default('') in ['proposed', 'executing', 'cleaning']
+         and not (dsgrow_lock_data.expires | default(0) | dsgrow_request_expired(now(utc=true).timestamp() | int)) }}
+  vars:
+    dsgrow_lock_data: "{{ (dsgrow_lock_raw.content | b64decode | from_json) if dsgrow_lock_stat.stat.exists else {} }}"

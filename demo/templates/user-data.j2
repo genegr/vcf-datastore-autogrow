@@ -1,0 +1,19 @@
+#cloud-config
+# The demo guest (demo/init.yml): key-only login as ubuntu with the demo's own key, time from the router. Nothing is
+# installed (no package mirror is assumed); the demo uses what the image has (mkfs.ext4, dd, systemd-run).
+hostname: {{ dd.vm }}
+fqdn: {{ dd.vm }}.{{ dd.dns_zone }}
+users:
+  - name: ubuntu
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "{{ dd_pubkey }}"
+ssh_pwauth: false
+package_update: false
+package_upgrade: false
+ntp:
+  enabled: true
+  ntp_client: chrony
+  servers: {{ dd.ntp | to_json }}

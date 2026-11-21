@@ -1,0 +1,9 @@
+---
+# Slack Web API from the playbooks (skill slack-approval-bridge). Entry points (tasks_from):
+#   api       call dsgrow_slack_method with dsgrow_slack_body -> dsgrow_slack_result (json)
+#   proposal  build the proposal blocks -> dsgrow_slack_blocks
+#   status    the request's blocks without buttons plus a status line (dsgrow_slack_status) -> dsgrow_slack_blocks
+# The bot token is read from SLACK_BOT_TOKEN in the environment; every call that carries it is no_log.
+- name: Use tasks_from
+  ansible.builtin.fail:
+    msg: "roles/dsgrow_slack has no main entry point; use tasks_from api, proposal or status"

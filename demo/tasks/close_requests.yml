@@ -1,0 +1,61 @@
+---
+# dsgrow's state for the demo datastore (dsgrow_state_dir). Open requests (proposed, executing, failed) are closed, so
+# an old Slack button can't start execute.yml on a datastore that is being removed or is gone (execute.yml refuses a
+# closed request). Finished ones (done, cleared, denied, closed) stay as the record of the demo.
+# Written directly, not through roles/dsgrow_state request_write: an include var `dsgrow_request` would outrank that
+# role's set_fact and write the request back unchanged (found by the review, 2026-11-20).
+# In: dc_close_reason. Out: dc_closed (the rids closed).
+- name: Request files
+  ansible.builtin.find:
+    paths: "{{ dsgrow_state_dir }}/requests"
+    patterns: ["*.json"]
+  register: dc_req_files
+
+- name: Read them
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ dc_req_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: dc_req_raw
+
+- name: Open requests for {{ dd.datastore }} in {{ dd_vc.hostname }}
+  ansible.builtin.set_fact:
+    dc_open: >-
+      {{ dc_req_raw.results | map(attribute='content') | map('b64decode') | map('from_json')
+         | selectattr('ds', 'defined') | selectattr('ds', 'equalto', dd.datastore)
+         | selectattr('vc', 'equalto', dd_vc.hostname)
+         | selectattr('status', 'in', ['proposed', 'executing', 'failed']) | list }}
+
+- name: Close each
+  ansible.builtin.copy:
+    content: >-
+      {{ item | combine({'status': 'closed', 'closed_reason': dc_close_reason,
+                         'updated_at': now(utc=true).isoformat()}) | to_nice_json(indent=2) }}
+    dest: "{{ dsgrow_state_dir }}/requests/{{ item.rid }}.json"
+    mode: "0600"
+  loop: "{{ dc_open }}"
+  loop_control:
+    label: "{{ item.rid }} ({{ item.status }})"
+
+- name: Read them back
+  ansible.builtin.slurp:
+    src: "{{ dsgrow_state_dir }}/requests/{{ item.rid }}.json"
+  loop: "{{ dc_open }}"
+  loop_control:
+    label: "{{ item.rid }}"
+  register: dc_back
+  when: not ansible_check_mode
+
+- name: None of them is open any more
+  ansible.builtin.assert:
+    that: >-
+      dc_back.results | map(attribute='content') | map('b64decode') | map('from_json')
+      | selectattr('status', 'ne', 'closed') | list | length == 0
+    fail_msg: "requests still open: {{ dc_open | map(attribute='rid') | list }}"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Closed
+  ansible.builtin.set_fact:
+    dc_closed: "{{ dc_open | map(attribute='rid') | list }}"

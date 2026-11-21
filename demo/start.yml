@@ -1,0 +1,278 @@
+---
+# "start the demo" (skill dsgrow-demo; LAB CHANGE: the owner's phrase is the go-ahead for this run).
+#   1. the datastore is measured (its space figures refreshed first: dsgrow_datastore_refresh, no host task) and ONE data disk is sized so that the datastore lands at
+#      dd.fill_pct: capacity * fill_pct / 100 - used
+#   2. that disk is hot-added THICK, LAZY-ZEROED (vmware_guest_disk type thick): VMFS allocates every block when the
+#      disk is created and writes none, so the datastore's used space jumps at once (seconds, not a 20-minute fill)
+#      and the FlashArray stores nothing (owner 2026-11-20: the fill must take about a minute, not 20)
+#   3. the datastore's figures refreshed again until they show the disk, the datastore read back, asserted at or above the alert threshold (80 %)
+#   4. Slack + this run's output: the disk, the datastore's used %, the time it took
+#   5. in the guest: ext4 on the disk (lazy init, no discard: quick), mounted at dd.data_mount
+# The Slack options depend on the used space when propose.yml runs: ~256/272/288 GiB at 85 %.
+# Then the product runs by itself: VCF Ops alert (used >= 80 %, at its next collection) -> rulebook -> Slack
+# proposal -> approval -> grow.
+# Rerun: the disk and the file system are found and left as they are (changed=0).
+#   bash tools/setup.sh demo/start.yml [--confirm start.yml]
+- name: Start the demo - the thick disk
+  hosts: localhost
+  gather_facts: false
+  vars_files: &dd_vars_files
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/eda.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware: &dd_vc_args
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+    dsgrow_datastore_backing: *dd_vc_args
+    dsgrow_datastore_refresh: *dd_vc_args
+    group/everpure.flasharray.everpure.flasharray:
+      fa_url: "{{ dd_fa_url }}"
+      api_token: "{{ dsgrow_fa_token }}"
+      disable_warnings: true
+  tasks:
+    - name: Start time
+      ansible.builtin.set_fact:
+        ds_t0: "{{ now(utc=true).timestamp() }}"
+
+    - name: Common
+      ansible.builtin.include_tasks: tasks/common.yml
+
+    # vCenter's cached used space can be stale (2026-11-20 19:27: sized 166.25 GiB from 1.8 % used, landed at 87.2 %,
+    # and the third Slack option fell over the 50 % cap). Only the datastore's own figures are refreshed: no host
+    # storage-system refresh and no rescan, because nothing changed on a device (owner 2026-11-21, skill
+    # vmfs-datastore-expand "When to rescan")
+    - name: Refresh {{ dd.datastore }}'s space figures (before measuring)
+      dsgrow_datastore_refresh:
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+      when: not ansible_check_mode
+
+    - name: Read the demo's objects
+      ansible.builtin.include_tasks: tasks/read.yml
+
+    - name: The demo's dsgrow lock
+      ansible.builtin.include_role:
+        name: dsgrow_state
+        tasks_from: lock_read
+      vars:
+        dsgrow_vc: "{{ dd_vc }}"
+        dsgrow_datastore_name: "{{ dd.datastore }}"
+
+    - name: The VM's disks
+      community.vmware.vmware_guest_disk_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+      register: ds_disks
+      check_mode: false
+      when: dd_has_vm
+
+    - name: The data disk (SCSI 0:1) if it is there already, and the size of a new one
+      ansible.builtin.set_fact:
+        ds_data_disk: >-
+          {{ (ds_disks.guest_disk_info | default({})).values() | selectattr('controller_bus_number', 'equalto', 0)
+             | selectattr('unit_number', 'equalto', 1) | list | first | default({}) }}
+        ds_used_pct: "{{ (dd_ds.datastore.used_bytes * 100.0 / dd_ds.datastore.capacity_bytes) | round(1) if dd_ds.matches == 1 else 0 }}"
+        ds_new_mib: >-
+          {{ (((dd_ds.datastore.capacity_bytes * (dd.fill_pct | int) / 100 - dd_ds.datastore.used_bytes) / 1048576)
+              | round(0, 'ceil') | int) if dd_ds.matches == 1 else 0 }}
+
+    - name: The data disk's size (the one there, or the one to add)
+      ansible.builtin.set_fact:
+        ds_disk_mib: "{{ (ds_data_disk.capacity_in_kb | int // 1024) if ds_data_disk else ds_new_mib | int }}"
+
+    - name: Preflight - the demo is initialized and idle
+      ansible.builtin.assert:
+        that: ds_problems | length == 0
+        fail_msg: "{{ ds_problems }}"
+        success_msg: >-
+          ok: {{ dd.datastore }} at {{ ds_used_pct }} % of
+          {{ (dd_ds.datastore.capacity_bytes | dsgrow_human_bytes) if dd_ds.matches == 1 else '?' }};
+          {{ ('data disk present (rerun), ' ~ (ds_disk_mib | int * 1048576) | dsgrow_human_bytes) if ds_data_disk
+             else ('thick data disk to add: ' ~ (ds_disk_mib | int * 1048576) | dsgrow_human_bytes ~ ' to reach ' ~ dd.fill_pct ~ ' %') }}
+        quiet: false
+      vars:
+        ds_problems: >-
+          {% set out = [] %}
+          {%- if not dd_rec %}{% set _ = out.append('no ' ~ dd_state_file ~ ': run demo/init.yml first') %}
+          {%- else %}
+          {%- if not dd_vol or (dd_vol.serial | upper) != (dd_rec.serial | upper) %}{% set _ = out.append('volume ' ~ dd.volume ~ ' is not the one init created') %}{% endif %}
+          {%- if dd_ds.matches != 1 or dd_ds.datastore.vmfs_uuid != dd_rec.vmfs_uuid | default('') %}{% set _ = out.append('datastore ' ~ dd.datastore ~ ' is not the one init created') %}{% endif %}
+          {%- if not dd_vm or dd_vm.instance_uuid != dd_rec.vm_uuid | default('') %}{% set _ = out.append('VM ' ~ dd.vm ~ ' is not the one init created') %}
+          {%- elif dd_vm.hw_power_status != 'poweredOn' %}{% set _ = out.append('VM ' ~ dd.vm ~ ' is ' ~ dd_vm.hw_power_status) %}{% endif %}
+          {%- if dsgrow_lock_held | bool %}{% set _ = out.append('a dsgrow request is in flight for ' ~ dd.datastore ~ ' (' ~ dsgrow_lock.status | default('?') ~ ')') %}{% endif %}
+          {%- if not ds_data_disk and ds_used_pct | float >= 80 %}{% set _ = out.append(dd.datastore ~ ' is already at ' ~ ds_used_pct ~ ' %') %}{% endif %}
+          {%- if not ds_data_disk and ds_new_mib | int < 1024 %}{% set _ = out.append('the disk to add would be ' ~ ds_new_mib ~ ' MiB') %}{% endif %}
+          {%- endif %}{{ out }}
+
+    - name: Add the THICK lazy-zeroed {{ (ds_disk_mib | int * 1048576) | dsgrow_human_bytes }} data disk (SCSI 0:1, on {{ dd.datastore }}; hot add)
+      community.vmware.vmware_guest_disk:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+        disk:
+          - controller_type: paravirtual
+            controller_number: 0
+            unit_number: 1
+            size_mb: "{{ ds_disk_mib | int }}"
+            type: thick                 # lazy-zeroed: allocated on VMFS at once, nothing written
+            datastore: "{{ dd.datastore }}"
+            state: present
+      register: ds_added
+      when: not ds_data_disk and not ansible_check_mode   # vmware_guest_disk has no check mode
+
+    # Right after the add, vCenter's figure lagged (3.9 % on 2026-11-20, 85.0 % seconds later). The datastore's own
+    # figures are refreshed until they show the disk: a VMDK is a file on the datastore, so no host storage-system
+    # refresh and no rescan
+    - name: Refresh {{ dd.datastore }}'s space figures until vCenter shows the disk
+      dsgrow_datastore_refresh:
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+      register: ds_refresh
+      until: ds_refresh.datastore.used_bytes * 100.0 / ds_refresh.datastore.capacity_bytes >= 80
+      retries: 12
+      delay: 5
+      when: not ansible_check_mode
+
+    - name: The datastore now
+      dsgrow_datastore_backing:
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+      register: ds_ds
+      check_mode: false
+
+    - name: Used % now and the time it took
+      ansible.builtin.set_fact:
+        dd_used_pct_now: "{{ (ds_ds.datastore.used_bytes * 100.0 / ds_ds.datastore.capacity_bytes) | round(1) }}"
+        dd_took_s: "{{ (now(utc=true).timestamp() - ds_t0 | float) | round(0) | int }}"
+
+    - name: The datastore is at or above the alert threshold (80 %)
+      ansible.builtin.assert:
+        that: dd_used_pct_now | float >= 80
+        fail_msg: "{{ dd.datastore }} is at {{ dd_used_pct_now }} % after the disk: the alert will not fire"
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: Notify - the datastore is full
+      ansible.builtin.include_tasks: tasks/slack_note.yml
+      vars:
+        dd_note: >-
+          :floppy_disk: *Demo started.* A {{ (ds_disk_mib | int * 1048576) | dsgrow_human_bytes }} thick disk was
+          added to `{{ dd.vm }}` on `{{ dd.datastore }}`: the datastore is at {{ dd_used_pct_now }} %
+          ({{ ds_ds.datastore.used_bytes | dsgrow_human_bytes }} of {{ ds_ds.datastore.capacity_bytes | dsgrow_human_bytes }}).
+          VCF Ops alerts at 80 %.
+      when: not ansible_check_mode and not dd_rec.started | default(false)
+
+    # once per demo: a rerun after a failure above still notifies, a rerun after success does not
+    - name: Record that the demo started
+      ansible.builtin.copy:
+        content: >-
+          {{ dd_rec | combine({'started': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                               'data_disk_mib': ds_disk_mib | int}) | to_nice_json(indent=2) }}
+        dest: "{{ dd_state_file }}"
+        mode: "0600"
+      when: not ansible_check_mode and not dd_rec.started | default(false)
+
+    - name: The guest for SSH
+      ansible.builtin.include_tasks: tasks/guest_host.yml
+
+- name: Start the demo - format the disk in the guest
+  hosts: dsgrow_demo_guest
+  gather_facts: false
+  become: true
+  vars_files: *dd_vars_files
+  vars:
+    dg_label: dsgrow-data
+    dg_size: "{{ hostvars['localhost'].ds_disk_mib | int * 1048576 }}"
+  tasks:
+    - name: SSH through the router
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+
+    - name: The guest is the demo VM
+      ansible.builtin.command: hostname
+      register: dg_name
+      changed_when: false
+      failed_when: dg_name.stdout | trim != dd.vm
+      check_mode: false
+
+    - name: Rescan the SCSI buses (the hot-added disk)
+      ansible.builtin.shell: for h in /sys/class/scsi_host/host*/scan; do echo '- - -' > "$h"; done
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: The block devices
+      ansible.builtin.command: lsblk -J -b -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS
+      register: dg_lsblk
+      changed_when: false
+      check_mode: false
+
+    - name: The data disk is the one disk of the size added
+      ansible.builtin.set_fact:
+        dg_disks: >-
+          {{ (dg_lsblk.stdout | from_json).blockdevices | selectattr('type', 'equalto', 'disk')
+             | selectattr('size', 'equalto', dg_size | int) | list }}
+
+    - name: Exactly one such disk, empty or ours
+      ansible.builtin.assert:
+        that:
+          - dg_disks | length == 1
+          - dg_disks[0].fstype is none or (dg_disks[0].fstype == 'ext4' and dg_disks[0].label == dg_label)
+          - dg_disks[0].children is not defined
+        fail_msg: "{{ dg_disks | to_json }}"
+        quiet: true
+      when: not ansible_check_mode or dg_disks | length > 0
+
+    - name: Format and mount
+      when: dg_disks | length == 1
+      block:
+        # lazy init (the default) and no discard: seconds; the disk is thick, so nothing on VMFS grows later
+        - name: An ext4 file system on /dev/{{ dg_disks[0].name }}
+          community.general.filesystem:
+            dev: "/dev/{{ dg_disks[0].name }}"
+            fstype: ext4
+            opts: "-L {{ dg_label }} -E nodiscard"
+
+        - name: In fstab
+          ansible.builtin.lineinfile:
+            path: /etc/fstab
+            line: "LABEL={{ dg_label }} {{ dd.data_mount }} ext4 defaults,nofail 0 2"
+            regexp: "^LABEL={{ dg_label }}\\s"
+
+        - name: Mount point
+          ansible.builtin.file:
+            path: "{{ dd.data_mount }}"
+            state: directory
+            mode: "0755"
+
+        - name: Mounted?
+          ansible.builtin.command: findmnt -n {{ dd.data_mount }}
+          register: dg_mnt
+          changed_when: false
+          failed_when: false
+          check_mode: false
+
+        # ansible.posix (the mount module) is not in the image; fstab is written above, this only mounts it
+        - name: Mount {{ dd.data_mount }}
+          ansible.builtin.command: mount {{ dd.data_mount }}  # noqa: command-instead-of-module
+          when: dg_mnt.rc != 0 and not ansible_check_mode
+          changed_when: true
+
+- name: Start the demo - what to watch
+  hosts: localhost
+  gather_facts: false
+  vars_files: *dd_vars_files
+  tasks:
+    - name: Started
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'check mode: nothing was changed' if ansible_check_mode else
+             dd.datastore ~ ' at ' ~ dd_used_pct_now ~ ' % ' ~ dd_took_s ~ ' s after the start (data disk ' ~
+             (ds_disk_mib | int * 1048576) | dsgrow_human_bytes ~ ', thick, formatted on ' ~ dd.vm ~ ':' ~ dd.data_mount ~
+             '). VCF Ops alerts at its next collection. Watch: bash tools/probe.sh tests/probes/demo_status.yml' }}

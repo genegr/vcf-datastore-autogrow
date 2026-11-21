@@ -1,0 +1,25 @@
+# Slack app for the dsgrow demo workspace (skill slack-approval-bridge). Create it at api.slack.com/apps
+# -> "Create New App" -> "From an app manifest", paste this, install it to the workspace, then:
+#   - Basic Information -> App-Level Tokens: create one with scope connections:write   -> SLACK_APP_TOKEN (xapp-...)
+#   - OAuth & Permissions: Bot User OAuth Token                                         -> SLACK_BOT_TOKEN (xoxb-...)
+#   - invite the bot into the demo channel (/invite @dsgrow); channel ID                -> DSGROW_SLACK_CHANNEL
+#   - the approvers' member IDs (profile -> "Copy member ID")                           -> DSGROW_APPROVER_IDS
+# All four go into .state/dsgrow.vault.yml on the run host (setup/vault.yml.example), never into the repo.
+display_information:
+  name: dsgrow
+  description: Human-approved VMFS datastore expansion (VCF Operations -> Ansible -> FlashArray)
+  background_color: "#1d3c34"
+features:
+  bot_user:
+    display_name: dsgrow
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write          # post the proposal, update it, reply in its thread, ephemeral refusals
+settings:
+  interactivity:
+    is_enabled: true        # buttons and the custom-size modal (delivered over Socket Mode)
+  org_deploy_enabled: false
+  socket_mode_enabled: true # outbound WebSocket only: nothing in the lab is exposed to the internet
+  token_rotation_enabled: false

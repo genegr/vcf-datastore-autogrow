@@ -1,0 +1,79 @@
+---
+# One array for eui_serial.yml. In: pr_item {key: array name, value: {volume: nguid}}.
+- name: "{{ pr_item.key }}: its entry in the inventory"
+  ansible.builtin.set_fact:
+    pr_fa: "{{ dsgrow_flasharrays | selectattr('name', 'equalto', pr_item.key) | first }}"
+
+- name: "{{ pr_item.key }}: REST versions"
+  ansible.builtin.uri:
+    url: "{{ pr_fa.url }}/api/api_version"
+    validate_certs: false
+    return_content: true
+  register: pr_versions
+
+- name: "{{ pr_item.key }}: log in"
+  ansible.builtin.uri:
+    url: "{{ pr_fa.url }}/api/{{ pr_fa.api_version }}/login"
+    method: POST
+    headers:
+      api-token: "{{ vault_array_tokens[pr_item.key] }}"
+    validate_certs: false
+  register: pr_login
+  no_log: true
+
+- name: "{{ pr_item.key }}: read, then always log out"
+  block:
+    - name: "{{ pr_item.key }}: the volumes"
+      ansible.builtin.uri:
+        url: "{{ pr_fa.url }}/api/{{ pr_fa.api_version }}/volumes?names={{ pr_item.value | list | join(',') | urlencode }}"
+        headers:
+          x-auth-token: "{{ pr_login.x_auth_token }}"
+        validate_certs: false
+        return_content: true
+      register: pr_vols
+      no_log: true
+
+    - name: "{{ pr_item.key }}: by serial (the query execute uses)"
+      ansible.builtin.uri:
+        url: >-
+          {{ pr_fa.url }}/api/{{ pr_fa.api_version }}/volumes?filter={{
+          ("serial='" ~ pr_vols.json['items'][0].serial ~ "'") | urlencode }}
+        headers:
+          x-auth-token: "{{ pr_login.x_auth_token }}"
+        validate_certs: false
+        return_content: true
+      register: pr_by_serial
+      no_log: true
+
+    - name: "{{ pr_item.key }}: array space"
+      ansible.builtin.uri:
+        url: "{{ pr_fa.url }}/api/{{ pr_fa.api_version }}/arrays/space"
+        headers:
+          x-auth-token: "{{ pr_login.x_auth_token }}"
+        validate_certs: false
+        return_content: true
+      register: pr_space
+      no_log: true
+
+  always:
+    - name: "{{ pr_item.key }}: log out"
+      ansible.builtin.uri:
+        url: "{{ pr_fa.url }}/api/{{ pr_fa.api_version }}/logout"
+        method: POST
+        headers:
+          x-auth-token: "{{ pr_login.x_auth_token }}"
+        validate_certs: false
+        status_code: [200, 204]
+      no_log: true
+
+- name: "{{ pr_item.key }}: record"
+  ansible.builtin.set_fact:
+    pr_results: >-
+      {{ pr_results | default([]) + [{
+           'array': pr_item.key,
+           'api_versions_2x': pr_versions.json.version | select('match', '^2\.') | list,
+           'api_version_used': pr_fa.api_version,
+           'volumes': pr_vols.json['items'] | map('community.general.json_query', '{name: name, serial: serial, provisioned: provisioned, destroyed: destroyed, pod: pod}') | list,
+           'filter_by_serial_hits': pr_by_serial.json['items'] | map(attribute='name') | list,
+           'space_keys': (pr_space.json['items'][0].space | default({})) | list,
+           'capacity': pr_space.json['items'][0].capacity | default(None)}] }}

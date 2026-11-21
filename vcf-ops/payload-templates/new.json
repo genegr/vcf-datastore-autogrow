@@ -1,0 +1,17 @@
+{
+  "schema": "dsgrow.vcfops.v1",
+  "event": "new",
+  "alert_id": "${ALERT_ID}",
+  "alert_definition": "${ALERT_DEFINITION}",
+  "status": "${ALERT_STATUS}",
+  "criticality": "${ALERT_CRITICALITY}",
+  "resource_name": "${RESOURCE_NAME}",
+  "resource_id": "${RESOURCE_ID}",
+  "resource_kind": "${RESOURCE_KIND}",
+  "adapter_kind": "${ADAPTER_KIND}",
+  "create_time": "${CREATE_TIME}",
+  "update_time": "${UPDATE_TIME}",
+  "cancel_time": "${CANCEL_TIME}",
+  "symptoms": "${SYMPTOMS}",
+  "link": "${LINK_TO_ALERT}"
+}

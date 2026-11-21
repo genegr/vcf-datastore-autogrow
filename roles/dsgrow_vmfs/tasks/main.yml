@@ -1,0 +1,129 @@
+---
+# vSphere side of the expansion (skill vmfs-datastore-expand). Runs after the FlashArray volume is at target.
+# In: dsgrow_vc, dsgrow_datastore_name, dsgrow_device, dsgrow_target_bytes, dsgrow_backing (before).
+# Out: dsgrow_vmfs_before_bytes, dsgrow_vmfs_after_bytes, dsgrow_backing (after).
+- name: Before
+  ansible.builtin.set_fact:
+    dsgrow_vmfs_before_bytes: "{{ dsgrow_backing.capacity_bytes | int }}"
+    dsgrow_vc_conn:
+      hostname: "{{ dsgrow_vc.hostname }}"
+      username: "{{ dsgrow_vc.username }}"
+      validate_certs: "{{ dsgrow_vc.validate_certs | default(true) }}"
+
+# The LUN was resized: HBA rescan AND storage refresh on every mounting host. The refresh is required: on 2026-11-21
+# 09:21 the rescan alone showed the grown device on every host, but vmware_host_datastore auto_expand on esx07 found
+# no space (ok, not changed) and verify failed; the retry at 09:28, after the hosts' storage had been refreshed, grew
+# it (changed). Skill vmfs-datastore-expand "When to rescan".
+- name: Rescan HBAs on every host that mounts {{ dsgrow_datastore_name }}
+  community.vmware.vmware_host_scanhba:
+    hostname: "{{ dsgrow_vc_conn.hostname }}"
+    username: "{{ dsgrow_vc_conn.username }}"
+    password: "{{ dsgrow_vc_password }}"
+    validate_certs: "{{ dsgrow_vc_conn.validate_certs }}"
+    esxi_hostname: "{{ item.name }}"
+    rescan_hba: true
+    refresh_storage: true
+  loop: "{{ dsgrow_backing.hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+    pause: 2
+
+- name: Read the backing after the rescan
+  ansible.builtin.include_role:
+    name: dsgrow_resolve
+    tasks_from: backing
+
+- name: Every host sees the grown device
+  ansible.builtin.assert:
+    that: dsgrow_short | length == 0
+    fail_msg: >-
+      after the rescan these hosts still see {{ dsgrow_device }} below {{ dsgrow_target_bytes | dsgrow_human_bytes }}:
+      {{ dsgrow_short }}. The volume is grown, VMFS is not (safe; resend the approval to finish).
+    quiet: true
+  vars:
+    # (a loop: the device id contains a dot, so it can't be an attribute path)
+    dsgrow_short: >-
+      {% set out = [] %}{% for h in dsgrow_backing.hosts %}
+      {%- if (h.devices[dsgrow_device] | default(0) | int) < (dsgrow_target_bytes | int) %}
+      {%- set _ = out.append(h.name ~ '=' ~ (h.devices[dsgrow_device] | default(0) | int | dsgrow_human_bytes)) %}
+      {%- endif %}{% endfor %}{{ out }}
+  when: not ansible_check_mode
+
+- name: The expand host mounts {{ dsgrow_datastore_name }} (else vmware_host_datastore would try to create a VMFS)
+  ansible.builtin.assert:
+    that:
+      - dsgrow_expand_host.mounted
+      - dsgrow_expand_host.accessible
+      - dsgrow_backing.extents == [dsgrow_device]
+    fail_msg: "{{ dsgrow_expand_host.name }} does not mount {{ dsgrow_datastore_name }} on {{ dsgrow_device }} any more"
+    quiet: true
+  vars:
+    dsgrow_expand_host: "{{ dsgrow_backing.hosts | first }}"
+
+- name: Expand VMFS {{ dsgrow_datastore_name }} into the new space, on {{ (dsgrow_backing.hosts | first).name }}
+  community.vmware.vmware_host_datastore:
+    hostname: "{{ dsgrow_vc_conn.hostname }}"
+    username: "{{ dsgrow_vc_conn.username }}"
+    password: "{{ dsgrow_vc_password }}"
+    validate_certs: "{{ dsgrow_vc_conn.validate_certs }}"
+    esxi_hostname: "{{ (dsgrow_backing.hosts | first).name }}"
+    datastore_name: "{{ dsgrow_datastore_name }}"
+    datastore_type: vmfs
+    vmfs_device_name: "{{ dsgrow_device }}"
+    vmfs_version: 6
+    auto_expand: true
+    state: present
+
+# The LUN was resized, not attached: no VMFS rescan and no second HBA rescan. A host that doesn't show the grown VMFS
+# yet gets a storage refresh, and only that host (owner 2026-11-21: on 08:58 esx08 and esx09 were refreshed whether or
+# not they needed it; on the 09:28 retry no host lagged and the refresh was skipped). The verify step below still
+# requires the new capacity on every mounting host
+- name: Read the backing after the expand
+  ansible.builtin.include_role:
+    name: dsgrow_resolve
+    tasks_from: backing
+
+- name: Hosts that don't show the grown VMFS yet
+  ansible.builtin.set_fact:
+    dsgrow_min_bytes: "{{ (dsgrow_target_bytes | int * (100 - dsgrow_capacity_tolerance_pct | float) / 100) | int }}"
+    dsgrow_lagging: >-
+      {{ dsgrow_backing.hosts | rejectattr('vmfs_capacity_bytes', 'ge',
+         (dsgrow_target_bytes | int * (100 - dsgrow_capacity_tolerance_pct | float) / 100) | int)
+         | map(attribute='name') | list }}
+
+- name: Refresh the VMFS view only on those hosts
+  community.vmware.vmware_host_scanhba:
+    hostname: "{{ dsgrow_vc_conn.hostname }}"
+    username: "{{ dsgrow_vc_conn.username }}"
+    password: "{{ dsgrow_vc_password }}"
+    validate_certs: "{{ dsgrow_vc_conn.validate_certs }}"
+    esxi_hostname: "{{ item }}"
+    rescan_hba: false
+    rescan_vmfs: false
+    refresh_storage: true
+  loop: "{{ dsgrow_lagging }}"
+  loop_control:
+    pause: 2
+
+- name: Read the backing after that refresh
+  ansible.builtin.include_role:
+    name: dsgrow_resolve
+    tasks_from: backing
+  when: dsgrow_lagging | length > 0
+
+- name: After
+  ansible.builtin.set_fact:
+    dsgrow_vmfs_after_bytes: "{{ dsgrow_backing.capacity_bytes | int }}"
+
+- name: Verify - capacity at target on every host, accessible everywhere
+  ansible.builtin.assert:
+    that:
+      - dsgrow_backing.capacity_bytes | int >= dsgrow_min_bytes | int
+      - dsgrow_backing.hosts | map(attribute='vmfs_capacity_bytes') | unique | list | length == 1
+      - dsgrow_backing.hosts | rejectattr('accessible') | list | length == 0
+    fail_msg: >-
+      {{ dsgrow_datastore_name }} after the expand: {{ dsgrow_backing.capacity_bytes | dsgrow_human_bytes }}
+      (need >= {{ dsgrow_min_bytes | int | dsgrow_human_bytes }}); per host
+      {{ dsgrow_backing.hosts | items2dict(key_name='name', value_name='vmfs_capacity_bytes') }}
+    quiet: true
+  when: not ansible_check_mode

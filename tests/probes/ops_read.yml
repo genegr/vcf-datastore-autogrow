@@ -1,0 +1,137 @@
+---
+# READ-ONLY probe (docs before design; skill vcf-ops-webhook): what VCF Operations 9.1.1 on the lab offers for the
+# demo, before setup/vcfops.yml is written against it:
+#   - the vCenter adapter instances (what ${ADAPTER_INSTANCE} could render) and the lab's Datastore resources
+#   - the Datastore stat keys and latest values: used %, capacity, time remaining (the two symptoms' metrics)
+#   - which endpoints exist for outbound instances, notification rules, alert / symptom definitions, policies and
+#     payload templates (GET only; status codes recorded)
+# Only GETs plus token acquire / release, as the local admin (nested-vcf vault_vcf_password, read-only use).
+#   bash tools/probe.sh tests/probes/ops_read.yml
+# Output: .state/probes/ops_read.json (no secrets).
+- name: VCF Operations read
+  hosts: localhost
+  gather_facts: false
+  vars:
+    nvcf: /nvcf
+    pr_ops: https://ops.vcf9-1.lab/suite-api
+    pr_out: /work/.state/probes
+    pr_datastores: [vcf9-1-w01-ds01, vcf9-1-w01-dr01, vcf9-1-w02-ds01, vcf9-1-w02-demo01]
+    pr_stat_pattern: "(?i)(capacity|usedspace|timeremaining|time_remaining|diskspace|demand)"
+    pr_paths:
+      - /api/versions/current
+      - /api/alertplugins
+      - /api/notifications/rules
+      - /api/alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=50
+      - /api/symptomdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=50
+      - /api/policies
+      - /api/notifications/payloadtemplates
+      - /api/notifications/payload-templates
+      - /api/payloadtemplates
+      - /api/notifications/templates
+      - /api/alertplugins/types
+      - /api/adapterkinds/VMWARE/resourcekinds/Datastore/statkeys
+  vars_files:
+    - "{{ nvcf }}/labs/vcf9-1.vault.yml"
+  tasks:
+    - name: Token for the local admin
+      ansible.builtin.uri:
+        url: "{{ pr_ops }}/api/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: pr_tok
+      no_log: true
+
+    - name: Read, then always release the token
+      block:
+        - name: Endpoints
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}{{ item }}"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            return_content: true
+            status_code: [200, 400, 403, 404, 405, 500]
+          loop: "{{ pr_paths }}"
+          register: pr_paths_raw
+          no_log: true
+
+        - name: The vCenter adapter instances
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/adapters?adapterKindKey=VMWARE"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            return_content: true
+          register: pr_adapters
+          no_log: true
+
+        - name: The lab's datastores
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/resources?adapterKind=VMWARE&resourceKind=Datastore&name={{ item | urlencode }}"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            return_content: true
+          loop: "{{ pr_datastores }}"
+          register: pr_ds
+          no_log: true
+
+        - name: Latest stats of each datastore found
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/resources/{{ item.identifier }}/stats/latest"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            return_content: true
+          loop: "{{ pr_ds.results | map(attribute='json') | map(attribute='resourceList') | flatten }}"
+          loop_control:
+            label: "{{ item.resourceKey.name }}"
+          register: pr_stats
+          no_log: true
+
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ pr_ops }}/api/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          when: pr_tok.json.token is defined
+          no_log: true
+
+    - name: Output directory
+      ansible.builtin.file:
+        path: "{{ pr_out }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save what was read (no secrets)
+      ansible.builtin.copy:
+        content: >-
+          {{ {
+            'endpoints': pr_paths_raw.results | map('community.general.json_query',
+                          '{path: item, status: status, keys: keys(json || `{}`)}') | list,
+            'endpoint_samples': pr_paths_raw.results | selectattr('status', 'equalto', 200)
+                                | items2dict(key_name='item', value_name='json'),
+            'vcenter_adapters': pr_adapters.json.adapterInstancesInfoDto | default([])
+                                | map('community.general.json_query', '{id: id, name: resourceKey.name, identifiers: resourceKey.resourceIdentifiers}') | list,
+            'datastores': pr_ds.results | map(attribute='json') | map(attribute='resourceList') | flatten
+                          | map('community.general.json_query', '{id: identifier, name: resourceKey.name, identifiers: resourceKey.resourceIdentifiers}') | list,
+            'stats': pr_stats_rows
+          } | to_nice_json(indent=2) }}
+        dest: "{{ pr_out }}/ops_read.json"
+        mode: "0600"
+      vars:
+        pr_stats_rows: >-
+          {% set rows = [] %}{% for r in pr_stats.results %}
+          {%- set stats = [] %}{% for s in (r.json['values'] | default([{}]))[0].get('stat-list', {}).get('stat', []) %}
+          {%- set _ = stats.append({'key': s.statKey.key, 'data': s.data | default([])}) %}{% endfor %}
+          {%- set _ = rows.append({'datastore': r.item.resourceKey.name, 'stats': stats}) %}{% endfor %}{{ rows }}
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "endpoints: {{ pr_paths_raw.results | map(attribute='item') | zip(pr_paths_raw.results | map(attribute='status')) | list }}"
+          - "vCenter adapters: {{ pr_adapters.json.adapterInstancesInfoDto | default([]) | map(attribute='resourceKey.name') | list }}"
+          - "datastores found: {{ pr_ds.results | map(attribute='json') | map(attribute='resourceList') | flatten | map(attribute='resourceKey.name') | list }}"
+          - "capacity / time keys on the first: {{ (pr_stats.results[0].json['values'][0]['stat-list'].stat | map(attribute='statKey.key') | select('search', pr_stat_pattern) | list) if pr_stats.results else 'none' }}"

@@ -1,0 +1,20 @@
+---
+# Derived names for demo/*.yml and setup/template.yml (the objects themselves: inventory/vcf9-1/group_vars/dsgrow/demo.yml).
+dd: "{{ dsgrow_demo }}"
+dd_vc: "{{ dsgrow_vcenters | selectattr('key', 'equalto', dsgrow_demo.vc_key) | first }}"
+# VM and datastore lifecycle run as the domain's SSO administrator (nested-vcf vault, read-only use); the execute path
+# keeps the least-privilege dsgrow accounts.
+dd_admin: "administrator@{{ dd_vc.username.split('@')[1] }}"
+dd_fa: "{{ dsgrow_flasharrays | selectattr('name', 'equalto', dsgrow_demo.array) | first }}"
+dsgrow_fa_array: "{{ dd_fa }}"            # dsgrow_fa_token (playbooks/group_vars/all/dsgrow.yml) is this array's
+dd_fa_url: "{{ dd_fa.url | regex_replace('^https?://', '') }}"
+dd_folder: "/{{ dd_vc.datacenter }}/vm/{{ dsgrow_demo.folder }}"
+dd_dir: /work/.state/demo
+dd_state_file: "{{ dd_dir }}/state.json"
+dd_seed_iso: "{{ dsgrow_demo.vm }}-seed.iso"     # at the demo datastore's root, removed with it
+dd_router_key: /nvcf/.state/labs/vcf9-1/ssh/router_ed25519
+# root on the nested ESXi hosts (nested-vcf's, read-only use: `esxcli nvme info get`, tasks/attach_target.yml);
+# ECDSA because ESX's FIPS-mode sshd refuses ed25519 (nested-vcf roles/esx_wait)
+dd_esx_key: /nvcf/.state/labs/vcf9-1/ssh/esx_ecdsa
+dd_guest_key: "{{ dd_dir }}/ssh/demo_ed25519"
+dd_ova: "/nvcf/.state/downloads/{{ dsgrow_demo.ova_file }}"

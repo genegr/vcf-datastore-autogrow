@@ -1,0 +1,27 @@
+---
+# In: dsgrow_rid (validated: a UUID). Out: dsgrow_request.
+- name: The request id is a UUID
+  ansible.builtin.assert:
+    that: dsgrow_rid is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    fail_msg: "request id {{ dsgrow_rid | string | truncate(60) }} is not a UUID"
+    quiet: true
+
+- name: Request file {{ dsgrow_rid }}
+  ansible.builtin.stat:
+    path: "{{ dsgrow_state_dir }}/requests/{{ dsgrow_rid }}.json"
+  register: dsgrow_request_stat
+
+- name: The request was proposed by this automation
+  ansible.builtin.assert:
+    that: dsgrow_request_stat.stat.exists
+    fail_msg: "request {{ dsgrow_rid }} is unknown: no proposal wrote it"
+    quiet: true
+
+- name: Read the request
+  ansible.builtin.slurp:
+    src: "{{ dsgrow_request_stat.stat.path }}"
+  register: dsgrow_request_raw
+
+- name: Request
+  ansible.builtin.set_fact:
+    dsgrow_request: "{{ dsgrow_request_raw.content | b64decode | from_json }}"

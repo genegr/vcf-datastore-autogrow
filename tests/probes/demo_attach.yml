@@ -1,0 +1,35 @@
+---
+# READ-ONLY: where demo/init.yml would connect the demo volume (demo/tasks/attach_target.yml): each demo ESXi host's
+# NVMe host NQN (esxcli over SSH), its FlashArray host object, and host group or private connections.
+#   bash tools/probe.sh tests/probes/demo_attach.yml
+- name: Demo - where the volume would be connected
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware: &dd_vc_args
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+    dsgrow_datastore_backing: *dd_vc_args
+    group/everpure.flasharray.everpure.flasharray:
+      fa_url: "{{ dd_fa_url }}"
+      api_token: "{{ dsgrow_fa_token }}"
+      disable_warnings: true
+  tasks:
+    - name: Load the dsgrow secrets
+      ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml
+
+    - name: Read the demo's objects
+      ansible.builtin.include_tasks: /work/demo/tasks/read.yml
+
+    - name: Where the volume goes
+      ansible.builtin.include_tasks: /work/demo/tasks/attach_target.yml

@@ -1,0 +1,23 @@
+---
+# In: dsgrow_vc, dsgrow_datastore_name. Out: dsgrow_backing (plugins/modules/dsgrow_datastore_backing). Read-only.
+- name: The vCenter password is available (vault or {{ dsgrow_vc.password_env }})
+  ansible.builtin.assert:
+    that: dsgrow_vc_password | length > 0
+    fail_msg: "no password for {{ dsgrow_vc.username }} (vault or environment variable {{ dsgrow_vc.password_env }})"
+    quiet: true
+
+- name: Backing of {{ dsgrow_datastore_name }} in {{ dsgrow_vc.hostname }}
+  dsgrow_datastore_backing:
+    hostname: "{{ dsgrow_vc.hostname }}"
+    username: "{{ dsgrow_vc.username }}"
+    password: "{{ dsgrow_vc_password }}"
+    validate_certs: "{{ dsgrow_vc.validate_certs | default(true) }}"
+    datacenter: "{{ dsgrow_vc.datacenter | default(omit) }}"
+    datastore: "{{ dsgrow_datastore_name }}"
+  register: dsgrow_backing_raw
+  check_mode: false
+
+- name: Backing
+  ansible.builtin.set_fact:
+    dsgrow_backing: "{{ dsgrow_backing_raw.datastore }}"
+    dsgrow_backing_matches: "{{ dsgrow_backing_raw.matches }}"

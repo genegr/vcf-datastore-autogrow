@@ -1,0 +1,7 @@
+---
+- name: State directories exist
+  ansible.builtin.file:
+    path: "{{ dsgrow_state_dir }}/{{ item }}"
+    state: directory
+    mode: "0700"
+  loop: [requests, locks]

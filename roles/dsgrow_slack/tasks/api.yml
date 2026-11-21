@@ -1,0 +1,31 @@
+---
+# In: dsgrow_slack_method (chat.postMessage | chat.update), dsgrow_slack_body (dict). Out: dsgrow_slack_result.
+# Slack answers HTTP 200 with ok:false on errors; the error code is shown without the token (the call is no_log).
+- name: Slack {{ dsgrow_slack_method }}
+  ansible.builtin.uri:
+    url: "{{ dsgrow_slack_api }}/{{ dsgrow_slack_method }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ lookup('ansible.builtin.env', 'SLACK_BOT_TOKEN') }}"
+    body_format: json
+    body: "{{ dsgrow_slack_body }}"
+    return_content: true
+    timeout: 30
+  register: dsgrow_slack_call
+  check_mode: false
+  failed_when: false
+  no_log: true
+  when: not ansible_check_mode or dsgrow_slack_in_check | default(false)
+
+- name: Slack {{ dsgrow_slack_method }} succeeded
+  ansible.builtin.assert:
+    that: dsgrow_slack_call.json.ok | default(false)
+    fail_msg: >-
+      Slack {{ dsgrow_slack_method }} failed: HTTP {{ dsgrow_slack_call.status | default('?') }},
+      error {{ dsgrow_slack_call.json.error | default(dsgrow_slack_call.msg | default('?')) }}
+    quiet: true
+  when: dsgrow_slack_call is not skipped
+
+- name: Slack result
+  ansible.builtin.set_fact:
+    dsgrow_slack_result: "{{ dsgrow_slack_call.json if dsgrow_slack_call is not skipped else {'ok': true, 'ts': 'check-mode', 'channel': dsgrow_slack_channel} }}"

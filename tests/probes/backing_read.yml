@@ -1,0 +1,80 @@
+---
+# READ-ONLY probe (skill vmfs-datastore-expand): runs plugins/modules/dsgrow_datastore_backing against the existing
+# workload-domain datastores, as each vCenter's SSO administrator (nested-vcf vault_sso_admin_password, read-only use;
+# the dsgrow service accounts don't exist yet). Proves the module on vCenter 9.1.1 / pyVmomi and shows the extent
+# device IDs (eui.*), the per-host mount state and the device sizes each host sees.
+#   bash tools/probe.sh tests/probes/backing_read.yml
+# Output: .state/probes/backing_read.json (no secrets).
+- name: Datastore backing on the lab vCenters
+  hosts: localhost
+  gather_facts: false
+  vars:
+    nvcf: /nvcf
+    pr_out: /work/.state/probes
+    pr_targets:
+      - {vc: w01, datastores: [vcf9-1-w01-ds01, vcf9-1-w01-dr01]}
+      - {vc: w02, datastores: [vcf9-1-w02-ds01]}
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - "{{ nvcf }}/labs/vcf9-1.vault.yml"
+  tasks:
+    - name: Backing
+      dsgrow_datastore_backing:
+        hostname: "{{ pr_vc.hostname }}"
+        username: "administrator@{{ pr_vc.username.split('@')[1] }}"
+        password: "{{ vault_sso_admin_password }}"
+        validate_certs: false
+        datacenter: "{{ pr_vc.datacenter }}"
+        datastore: "{{ item.1 }}"
+        query_expand: true
+      loop: "{{ pr_targets | subelements('datastores') }}"
+      loop_control:
+        label: "{{ item.0.vc }} {{ item.1 }}"
+      vars:
+        pr_vc: "{{ dsgrow_vcenters | selectattr('key', 'equalto', item.0.vc) | first }}"
+      register: pr_backing
+
+    # The same query straight on a host, as nested-vcf's lab_datastore connects (root, no vCenter): its dry run of
+    # 2026-11-19 failed there with "The object or item referred to could not be found" on vcf9-1-w01-ds01.
+    - name: Expand query directly on esx04 (root)
+      dsgrow_datastore_backing:
+        hostname: esx04.vcf9-1.lab
+        username: root
+        password: "{{ vault_esx_root_password }}"
+        validate_certs: false
+        datastore: vcf9-1-w01-ds01
+        query_expand: true
+      register: pr_direct
+      failed_when: false
+      no_log: true
+
+    - name: Direct result
+      ansible.builtin.debug:
+        msg: "direct esx04: matches={{ pr_direct.matches | default('?') }} expand={{ pr_direct.expand | default(pr_direct.msg | default('?')) }}"
+
+    - name: Output directory
+      ansible.builtin.file:
+        path: "{{ pr_out }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save
+      ansible.builtin.copy:
+        content: "{{ pr_backing.results | map('community.general.json_query', '{datastore: item[1], matches: matches, backing: datastore}') | list | to_nice_json(indent=2) }}"
+        dest: "{{ pr_out }}/backing_read.json"
+        mode: "0600"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ r.item[1] }}: matches={{ r.matches }} type={{ r.datastore.type | default('?') }}
+          vmfs={{ r.datastore.vmfs_major_version | default('?') }} extents={{ r.datastore.extents | default([]) }}
+          everpure={{ (r.datastore.extents | default(['']))[0] | dsgrow_is_everpure_device }}
+          hosts={{ r.datastore.hosts | default([]) | map(attribute='name') | list }}
+          device sizes={{ r.datastore.hosts | default([]) | map(attribute='devices') | list }}
+          expand query={{ r.expand | default('n/a') }}
+      loop: "{{ pr_backing.results }}"
+      loop_control:
+        loop_var: r
+        label: "{{ r.item[1] }}"

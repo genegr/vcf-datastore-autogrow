@@ -1,0 +1,36 @@
+---
+# In: dsgrow_vc_candidates, dsgrow_datastore_name. Out: dsgrow_vc (the one candidate that has the datastore).
+# Read-only. One candidate: taken as is (resolve's backing check refuses it if the datastore isn't there).
+- name: The only candidate
+  ansible.builtin.set_fact:
+    dsgrow_vc: "{{ dsgrow_vc_candidates | first }}"
+  when: dsgrow_vc_candidates | length == 1
+
+- name: Several candidates - which vCenters have {{ dsgrow_datastore_name }}
+  when: dsgrow_vc_candidates | length > 1
+  block:
+    - name: No vCenter yet
+      ansible.builtin.set_fact:
+        dsgrow_vc_found: []
+
+    - name: Look in each vCenter
+      ansible.builtin.include_tasks: pick_one.yml
+      vars:
+        dsgrow_vc: "{{ dsgrow_vc_try }}"
+      loop: "{{ dsgrow_vc_candidates }}"
+      loop_control:
+        loop_var: dsgrow_vc_try
+        label: "{{ dsgrow_vc_try.hostname }}"
+
+    - name: Exactly one vCenter has it
+      ansible.builtin.assert:
+        that: dsgrow_vc_found | length == 1
+        fail_msg: >-
+          {{ dsgrow_datastore_name }} exists in {{ dsgrow_vc_found | length }} of the configured vCenters
+          {{ dsgrow_vc_candidates | map(attribute='hostname') | list }}{% if dsgrow_vc_found %}:
+          {{ dsgrow_vc_found | map(attribute='hostname') | list }}{% endif %}
+        quiet: true
+
+    - name: The vCenter
+      ansible.builtin.set_fact:
+        dsgrow_vc: "{{ dsgrow_vc_found | first }}"

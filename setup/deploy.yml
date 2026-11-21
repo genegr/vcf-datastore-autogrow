@@ -1,0 +1,87 @@
+---
+# Step 4 (run host only): render the containers' env files from .state/secrets/ and the inventory.
+#   .state/eda.env     rulebook + playbooks: EDA tokens, HMAC, Slack bot token/channel/approvers, vCenter passwords,
+#                      FlashArray tokens
+#   .state/bridge.env  bridge: Slack bot + app tokens, approvers, approvals token + HMAC, the caps (fast feedback)
+# Both 0600, never committed (.gitignore). Then, with the owner's go-ahead (setup/README.md):
+#   docker compose build rulebook bridge && docker compose up -d rulebook bridge
+#   bash tools/setup.sh setup/deploy.yml [--confirm deploy.yml]
+- name: Dsgrow container environment
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/policy.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+  tasks:
+    - name: Secrets
+      ansible.builtin.include_tasks: tasks/secrets_load.yml
+
+    - name: Every secret is there
+      ansible.builtin.assert:
+        that: dp_missing | length == 0
+        fail_msg: "missing in .state/secrets/: {{ dp_missing }} (setup/secrets.example.yml)"
+        quiet: true
+      vars:
+        dp_needed: >-
+          {{ ['dsgrow_secret_slack_bot_token', 'dsgrow_secret_slack_app_token', 'dsgrow_secret_slack_channel',
+              'dsgrow_secret_approver_ids', 'dsgrow_secret_eda_vcfops_token', 'dsgrow_secret_eda_approvals_token',
+              'dsgrow_secret_approval_hmac_secret']
+             + (dsgrow_vcenters | map(attribute='key') | map('regex_replace', '^', 'dsgrow_secret_vc_password_') | list)
+             + (dsgrow_flasharrays | map(attribute='key') | map('regex_replace', '[^A-Za-z0-9]', '_') | map('lower')
+                | map('regex_replace', '^', 'dsgrow_secret_fa_token_') | list) }}
+        dp_missing: "{{ dp_needed | reject('in', vars) | list }}"
+
+    - name: The env files' content
+      ansible.builtin.set_fact:
+        dp_eda:
+          DSGROW_EDA_VCFOPS_TOKEN: "{{ dsgrow_secret_eda_vcfops_token }}"
+          DSGROW_EDA_APPROVALS_TOKEN: "{{ dsgrow_secret_eda_approvals_token }}"
+          DSGROW_APPROVAL_HMAC_SECRET: "{{ dsgrow_secret_approval_hmac_secret }}"
+          SLACK_BOT_TOKEN: "{{ dsgrow_secret_slack_bot_token }}"
+          DSGROW_SLACK_CHANNEL: "{{ dsgrow_secret_slack_channel }}"
+          DSGROW_APPROVER_IDS: "{{ dsgrow_secret_approver_ids | join(',') }}"
+        dp_eda_vc: >-
+          {{ dict(dsgrow_vcenters | map(attribute='password_env')
+                  | zip(dsgrow_vcenters | map(attribute='key') | map('regex_replace', '^', 'dsgrow_secret_vc_password_')
+                        | map('extract', vars))) }}
+        dp_eda_fa: >-
+          {{ dict(dsgrow_flasharrays | map(attribute='token_env')
+                  | zip(dsgrow_flasharrays | map(attribute='key') | map('regex_replace', '[^A-Za-z0-9]', '_') | map('lower')
+                        | map('regex_replace', '^', 'dsgrow_secret_fa_token_') | map('extract', vars))) }}
+        dp_bridge:
+          SLACK_BOT_TOKEN: "{{ dsgrow_secret_slack_bot_token }}"
+          SLACK_APP_TOKEN: "{{ dsgrow_secret_slack_app_token }}"
+          DSGROW_APPROVER_IDS: "{{ dsgrow_secret_approver_ids | join(',') }}"
+          DSGROW_EDA_APPROVALS_TOKEN: "{{ dsgrow_secret_eda_approvals_token }}"
+          DSGROW_APPROVAL_HMAC_SECRET: "{{ dsgrow_secret_approval_hmac_secret }}"
+          DSGROW_APPROVALS_URL: http://127.0.0.1:5081/approval
+          DSGROW_SIZE_STEP_BYTES: "{{ dsgrow_size_step_bytes }}"
+          DSGROW_MAX_GROWTH_PCT: "{{ dsgrow_max_growth_pct }}"
+          DSGROW_MAX_GROWTH_BYTES: "{{ dsgrow_max_growth_bytes }}"
+          DSGROW_MAX_VOLUME_BYTES: "{{ dsgrow_max_volume_bytes }}"
+      no_log: true
+
+    - name: Write .state/eda.env and .state/bridge.env
+      ansible.builtin.copy:
+        content: |
+          # rendered by setup/deploy.yml - do not edit, do not commit
+          {% for k, v in (item.data | dictsort) %}
+          {{ k }}={{ v }}
+          {% endfor %}
+        dest: /work/.state/{{ item.name }}.env
+        mode: "0600"
+      loop:
+        - {name: eda, data: "{{ dp_eda | combine(dp_eda_vc, dp_eda_fa) }}"}
+        - {name: bridge, data: "{{ dp_bridge }}"}
+      loop_control:
+        label: "{{ item.name }}.env"
+      no_log: true
+
+    - name: Next
+      ansible.builtin.debug:
+        msg: >-
+          env files written; with the owner's go-ahead: docker compose build rulebook bridge
+          && docker compose up -d rulebook bridge

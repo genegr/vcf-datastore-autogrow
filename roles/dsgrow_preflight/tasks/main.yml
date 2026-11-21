@@ -1,0 +1,57 @@
+---
+# All refusals and the size calculation (read-only). Runs after dsgrow_resolve.
+# In: dsgrow_backing, dsgrow_fa_match, dsgrow_policy; dsgrow_preflight_mode: propose | execute
+#     execute also: dsgrow_target_bytes (from the approval event, the only number taken from outside)
+# Out: propose -> dsgrow_options ({options, refused}); execute -> dsgrow_fa_needs_extend
+- name: Volume, array and datastore figures
+  ansible.builtin.set_fact:
+    dsgrow_current_bytes: "{{ dsgrow_fa_match.volume.provisioned | int }}"
+    dsgrow_used_bytes: "{{ dsgrow_backing.used_bytes | int }}"
+    dsgrow_used_pct: "{{ (dsgrow_backing.used_bytes * 100.0 / dsgrow_backing.capacity_bytes) | round(1) if dsgrow_backing.capacity_bytes else 0 }}"
+    dsgrow_array_space: "{{ dsgrow_fa_match.space }}"
+    dsgrow_array_free_pct: "{{ dsgrow_fa_match.space | dsgrow_array_free_pct_after(0) }}"
+
+- name: The volume is live and not in a pod
+  ansible.builtin.assert:
+    that:
+      - not (dsgrow_fa_match.volume.destroyed | default(false))
+      # REST 2.59 answers pod: {name: null} for a volume outside a pod (read on z-x70-a, 2026-11-19)
+      - (dsgrow_fa_match.volume.pod | default({}, true)).name | default('', true) | length == 0
+      - "'::' not in dsgrow_fa_match.volume.name"
+    fail_msg: >-
+      volume {{ dsgrow_fa_match.volume.name }} on {{ dsgrow_fa_match.array.name }} is
+      {{ 'destroyed' if dsgrow_fa_match.volume.destroyed | default(false) else 'in a pod (out of scope)' }}
+    quiet: true
+
+- name: Propose - size options
+  ansible.builtin.set_fact:
+    dsgrow_options: >-
+      {{ dsgrow_used_bytes | int | dsgrow_size_options(dsgrow_current_bytes | int, dsgrow_target_utilization_options,
+         dsgrow_policy, dsgrow_array_space) }}
+  when: dsgrow_preflight_mode == 'propose'
+
+- name: Execute - the approved target
+  when: dsgrow_preflight_mode == 'execute'
+  block:
+    - name: Execute - the target is never below the volume (rule 1)
+      ansible.builtin.assert:
+        that: dsgrow_target_bytes | int >= dsgrow_current_bytes | int
+        fail_msg: >-
+          volume {{ dsgrow_fa_match.volume.name }} is already {{ dsgrow_current_bytes | dsgrow_human_bytes }}, above
+          the approved {{ dsgrow_target_bytes | dsgrow_human_bytes }}: refusing, check the volume by hand
+        quiet: true
+
+    - name: Execute - every cap holds (rule 3; checked only when the volume still has to grow)
+      ansible.builtin.assert:
+        that: dsgrow_reasons | length == 0
+        fail_msg: "{{ dsgrow_reasons | join('; ') }}"
+        quiet: true
+      vars:
+        dsgrow_reasons: >-
+          {{ dsgrow_target_bytes | int | dsgrow_check_target(dsgrow_current_bytes | int, dsgrow_policy,
+             dsgrow_array_space) }}
+      when: dsgrow_target_bytes | int > dsgrow_current_bytes | int
+
+    - name: Execute - does the volume still have to grow
+      ansible.builtin.set_fact:
+        dsgrow_fa_needs_extend: "{{ dsgrow_target_bytes | int > dsgrow_current_bytes | int }}"

@@ -1,0 +1,475 @@
+---
+# "initialize the demo" (skill dsgrow-demo; LAB CHANGE: the owner's phrase is the go-ahead for this run).
+# From nothing to a demo ready to start (inventory dsgrow_demo):
+#   array    thin volume dsgrow-demo01 (200 GiB) on z-x70-a, connected to the host group of the three w02 hosts
+#            (found by their NVMe host NQNs; per host object when they are in no host group: tasks/attach_target.yml)
+#   vSphere  rescan, VMFS 6 datastore dsgrow-demo01 created from esx07, mounted on all three (HA left as it is)
+#   guest    dsgrow-demo-vm cloned from the template onto it, a cloud-init seed (static IP, the demo key), powered on,
+#            reached over SSH through the router
+#   VCF Ops  waits until it has discovered the datastore (the alert can only fire on a resource it knows)
+# Resumable and rerunnable: each object is created only when absent, and an existing one must be the one recorded in
+# .state/demo/state.json (serial, VMFS UUID, VM UUID); anything else under the demo's names is refused, never adopted.
+# A rerun on a ready demo reports changed=0. Undo: demo/cleanup.yml.
+#   bash tools/setup.sh demo/init.yml [--confirm init.yml]
+- name: Initialize the demo - array, datastore, guest
+  hosts: localhost
+  gather_facts: false
+  vars_files: &dd_vars_files
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/eda.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware: &dd_vc_args
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+    dsgrow_datastore_backing: *dd_vc_args
+    esx_vmfs_volume: *dd_vc_args
+    cluster_ha_heartbeat_info: *dd_vc_args
+    cluster_ha_heartbeat_pref: *dd_vc_args
+    group/everpure.flasharray.everpure.flasharray:
+      fa_url: "{{ dd_fa_url }}"
+      api_token: "{{ dsgrow_fa_token }}"
+      disable_warnings: true
+  tasks:
+    - name: Common
+      ansible.builtin.include_tasks: tasks/common.yml
+
+    - name: Read the demo's objects
+      ansible.builtin.include_tasks: tasks/read.yml
+
+    - name: Where the volume is connected (host NQNs -> host objects -> host group or each host)
+      ansible.builtin.include_tasks: tasks/attach_target.yml
+
+    # ------------------------------------------------------------------ preflight
+    - name: The template
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.template }}"
+      register: di_tpl
+      check_mode: false
+      failed_when: di_tpl.instance is not defined and (di_tpl.msg | default('')) is not search('non-existing VM')
+
+    - name: Preflight
+      ansible.builtin.assert:
+        that: di_problems | length == 0
+        fail_msg: "{{ di_problems }}"
+        success_msg: >-
+          ok: {{ 'nothing exists yet' if not (dd_has_vol or dd_ds.matches > 0 or dd_has_vm) else 'resuming / rerun on the recorded objects' }}
+        quiet: false
+      vars:
+        di_problems: >-
+          {% set out = [] %}
+          {%- if di_tpl.instance is not defined or not di_tpl.instance.hw_is_template %}{% set _ = out.append('template ' ~ dd.template ~ ' missing: run setup/template.yml') %}{% endif %}
+          {%- if dd_vol_deleted %}{% set _ = out.append('volume ' ~ dd.volume ~ ' is in the array trash: eradicate it (demo/cleanup.yml) first') %}{% endif %}
+          {%- if dd_vol and (dd_vol.serial | upper) != (dd_rec.serial | default('') | upper) %}
+          {%- set _ = out.append('volume ' ~ dd.volume ~ ' exists (serial ' ~ dd_vol.serial ~ ') but init did not record it: run demo/cleanup.yml or check by hand') %}{% endif %}
+          {%- if dd_ds.matches > 1 %}{% set _ = out.append(dd_ds.matches ~ ' datastores are named ' ~ dd.datastore) %}{% endif %}
+          {%- if dd_ds.matches == 1 and (dd_ds.datastore.extents != [dd_rec.eui | default('')]
+                 or (dd_rec.vmfs_uuid is defined and dd_ds.datastore.vmfs_uuid != dd_rec.vmfs_uuid)) %}
+          {%- set _ = out.append('datastore ' ~ dd.datastore ~ ' exists (VMFS ' ~ dd_ds.datastore.vmfs_uuid ~ ' on ' ~ dd_ds.datastore.extents ~ ') but init did not create it') %}{% endif %}
+          {%- if dd_has_vm and not (dd_vm.instance_uuid == dd_rec.vm_uuid | default('')
+                 or (dd_rec.vm_uuid is not defined and dd_vm.annotation | default('') == 'dsgrow-demo ' ~ dd_rec.instance | default('?'))) %}
+          {%- set _ = out.append('VM ' ~ dd.vm ~ ' exists but init did not create it') %}{% endif %}
+          {%- if dd_rec.attach is defined and (dd_rec.attach.mode, dd_rec.attach.hgroup | default(''), dd_rec.attach.hosts)
+                 != (dd_attach.mode, dd_attach.hgroup | default(''), dd_attach.hosts) %}
+          {%- set _ = out.append('init connected ' ~ dd.volume ~ ' to ' ~ dd_rec.attach ~ ', now it would be ' ~ dd_attach ~ ': run demo/cleanup.yml first') %}{% endif %}
+          {%- if lookup('ansible.builtin.env', 'SLACK_BOT_TOKEN') | length == 0 or dsgrow_slack_channel | length == 0 %}
+          {%- set _ = out.append('no Slack token/channel in the environment (.state/eda.env)') %}{% endif %}
+          {{- out }}
+
+    - name: The rulebook listens for VCF Ops (dsgrow-eda, port {{ dsgrow_eda_vcfops_port }})
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ dsgrow_eda_vcfops_port }}"
+        timeout: 5
+
+    - name: The record so far
+      ansible.builtin.set_fact:
+        dd_new: "{{ dd_rec | combine({'instance': dd_rec.instance | default(now(utc=true).strftime('%Y%m%dT%H%M%SZ'))}) }}"
+
+    # ------------------------------------------------------------------ array
+    - name: "{{ dd.array }}: create {{ dd.volume }} ({{ dd.size_gib }} GiB, thin)"
+      everpure.flasharray.purefa_volume:
+        name: "{{ dd.volume }}"
+        size: "{{ dd.size_gib }}G"
+      register: di_create
+      when: not dd_has_vol
+
+    - name: The volume's serial and NVMe EUI
+      ansible.builtin.set_fact:
+        dd_new: >-
+          {{ dd_new | combine({'array': dd.array, 'volume': dd.volume, 'serial': di_serial,
+                               'eui': di_serial | dsgrow_fa_serial_to_device('eui') if di_serial else '',
+                               'attach': dd_attach}) }}
+      vars:
+        di_serial: >-
+          {{ (di_create.volume[dd.volume].serial if (di_create is changed and not ansible_check_mode)
+              else dd_vol.serial | default('')) | upper }}
+
+    - name: Record the volume
+      ansible.builtin.copy:
+        content: "{{ dd_new | to_nice_json(indent=2) }}\n"
+        dest: "{{ dd_state_file }}"
+        mode: "0600"
+      when: not ansible_check_mode
+
+    # purefa_hg with only `volume` adds that one connection and leaves the group's hosts and other volumes alone
+    # (1.46.0 update_hostgroup); in check mode it fails with "Volume not found" while the volume does not exist yet
+    - name: "{{ dd.array }}: connect {{ dd.volume }} to host group {{ dd_attach.hgroup | default('-') }}"
+      everpure.flasharray.purefa_hg:
+        name: "{{ dd_attach.hgroup }}"
+        volume: ["{{ dd.volume }}"]
+      when: dd_attach.mode == 'hgroup' and not (ansible_check_mode and not dd_has_vol)
+
+    - name: "{{ dd.array }}: connect {{ dd.volume }} to each host object (they are in no host group)"
+      everpure.flasharray.purefa_host:
+        name: "{{ item }}"
+        volume: "{{ dd.volume }}"
+      loop: "{{ dd_attach.hosts }}"
+      when: dd_attach.mode == 'hosts'
+
+    - name: "{{ dd.array }}: connections read back"
+      everpure.flasharray.purefa_info:
+        gather_subset: [hosts, hgroups]
+      register: di_conn_info
+      when: not ansible_check_mode
+
+    - name: Connected where intended, and nowhere else
+      ansible.builtin.assert:
+        that:
+          - di_groups == ([dd_attach.hgroup] if dd_attach.mode == 'hgroup' else [])
+          - di_private | sort == ([] if dd_attach.mode == 'hgroup' else dd_attach.hosts | sort)
+        fail_msg: >-
+          {{ dd.volume }}: host groups {{ di_groups }}, private connections {{ di_private }};
+          want {{ ('host group ' ~ dd_attach.hgroup) if dd_attach.mode == 'hgroup' else ('private to ' ~ dd_attach.hosts) }}
+        quiet: true
+      vars:
+        di_groups: >-
+          {% set out = [] %}{% for n, g in di_conn_info.purefa_info.hgroups.items() %}
+          {%- if dd.volume in (g.vols | default([], true) | map(attribute='name') | list) %}{% set _ = out.append(n) %}{% endif %}
+          {%- endfor %}{{ out }}
+        # a private connection is a host's connection without a host group (purefa_info lists group members too)
+        di_private: >-
+          {% set out = [] %}{% for n, h in di_conn_info.purefa_info.hosts.items() %}{% for c in h.volumes | default([]) %}
+          {%- if c.volume == dd.volume and not c.hostgroup %}{% set _ = out.append(n) %}{% endif %}{% endfor %}{% endfor %}{{ out }}
+      when: not ansible_check_mode
+
+    # ------------------------------------------------------------------ vSphere
+    - name: Rescan the hosts (the new device)
+      community.vmware.vmware_host_scanhba:
+        esxi_hostname: "{{ item }}"
+        rescan_hba: true
+        refresh_storage: true
+      loop: "{{ dd.esx_hosts }}"
+      changed_when: false
+      when: not ansible_check_mode and dd_ds.matches == 0
+
+    - name: "{{ dd.esx_hosts[0] }} sees {{ dd_new.eui }}"
+      community.vmware.vmware_host_disk_info:
+        esxi_hostname: "{{ dd.esx_hosts[0] }}"
+      register: di_disks
+      until: dd_new.eui in (di_disks.hosts_disk_info[dd.esx_hosts[0]] | default([]) | map(attribute='canonical_name') | list)
+      retries: 12
+      delay: 10
+      when: not ansible_check_mode and dd_ds.matches == 0
+
+    - name: Create VMFS 6 datastore {{ dd.datastore }} on {{ dd_new.eui }} (from {{ dd.esx_hosts[0] }})
+      community.vmware.vmware_host_datastore:
+        esxi_hostname: "{{ dd.esx_hosts[0] }}"
+        datastore_name: "{{ dd.datastore }}"
+        datastore_type: vmfs
+        vmfs_device_name: "{{ dd_new.eui }}"
+        vmfs_version: 6
+        auto_expand: false
+        state: present
+      when: not ansible_check_mode and dd_ds.matches == 0
+
+    - name: The new datastore's VMFS UUID
+      dsgrow_datastore_backing:
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+      register: di_ds_new
+      when: not ansible_check_mode
+
+    - name: Record the datastore at once (a failure below leaves it resumable and removable)
+      ansible.builtin.copy:
+        content: "{{ di_rec_ds | to_nice_json(indent=2) }}\n"
+        dest: "{{ dd_state_file }}"
+        mode: "0600"
+      vars:
+        di_rec_ds: >-
+          {{ dd_new | combine({'datastore': dd.datastore, 'vmfs_uuid': di_ds_new.datastore.vmfs_uuid,
+                               'datastore_moid': di_ds_new.datastore.moid, 'vcenter_uuid': di_ds_new.datastore.vcenter_uuid})
+             if di_ds_new.matches | default(0) == 1 and di_ds_new.datastore.extents == [dd_new.eui] else dd_new }}
+      when: not ansible_check_mode
+
+    # VMFS only: the device is already known from the HBA rescan above (rescan_hba defaults to true; owner 2026-11-21)
+    - name: The other hosts mount it (rescan VMFS)
+      community.vmware.vmware_host_scanhba:
+        esxi_hostname: "{{ item }}"
+        rescan_hba: false
+        rescan_vmfs: true
+        refresh_storage: true
+      loop: "{{ dd.esx_hosts[1:] }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: The datastore read back
+      dsgrow_datastore_backing:
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+      register: di_ds
+      until: >-
+        di_ds.matches == 1 and di_ds.datastore.hosts | length == dd.esx_hosts | length
+        and di_ds.datastore.hosts | rejectattr('mounted') | list | length == 0
+      retries: 12
+      delay: 10
+      when: not ansible_check_mode
+
+    - name: One VMFS 6 extent on our device, mounted and accessible on every host, ~{{ dd.size_gib }} GiB
+      ansible.builtin.assert:
+        that:
+          - di_ds.datastore.type == 'VMFS'
+          - di_ds.datastore.vmfs_major_version == 6
+          - di_ds.datastore.extents == [dd_new.eui]
+          - di_ds.datastore.hosts | map(attribute='name') | sort == dd.esx_hosts | sort
+          - di_ds.datastore.hosts | rejectattr('accessible') | list | length == 0
+          - di_ds.datastore.capacity_bytes > dd.size_gib * 1073741824 * 0.99
+          - di_ds.datastore.capacity_bytes <= dd.size_gib * 1073741824
+        fail_msg: "{{ di_ds.datastore | to_json }}"
+        quiet: true
+      when: not ansible_check_mode
+
+    # its identity (moref + vCenter instance UUID) is what VCF Ops keys the resource on: the VCF Ops wait matches it
+    - name: The datastore in the record
+      ansible.builtin.set_fact:
+        dd_new: >-
+          {{ dd_new | combine({'datastore': dd.datastore, 'vmfs_uuid': di_ds.datastore.vmfs_uuid,
+                               'datastore_moid': di_ds.datastore.moid, 'vcenter_uuid': di_ds.datastore.vcenter_uuid}) }}
+      when: not ansible_check_mode
+
+    - name: Record the datastore
+      ansible.builtin.copy:
+        content: "{{ dd_new | to_nice_json(indent=2) }}\n"
+        dest: "{{ dd_state_file }}"
+        mode: "0600"
+      when: not ansible_check_mode
+
+    # HA is left as it is: it may heartbeat on the demo datastore; demo/cleanup.yml moves it off and puts it back
+    # ------------------------------------------------------------------ guest
+    # No module in the image makes an SSH key pair (community.crypto is not installed); ssh-keygen runs once.
+    - name: The demo guest's SSH key (once)
+      ansible.builtin.command:
+        argv: [ssh-keygen, -q, -t, ed25519, -N, "", -C, "dsgrow demo guest", -f, "{{ dd_guest_key }}"]
+        creates: "{{ dd_guest_key }}"
+      check_mode: false
+
+    - name: Read the public key
+      ansible.builtin.slurp:
+        src: "{{ dd_guest_key }}.pub"
+      register: di_pub
+
+    - name: Seed files (cloud-init NoCloud)
+      ansible.builtin.template:
+        src: "templates/{{ item }}.j2"
+        dest: "{{ dd_dir }}/seed/{{ item }}"
+        mode: "0600"
+      loop: [meta-data, user-data, network-config]
+      vars:
+        dd_pubkey: "{{ di_pub.content | b64decode | trim }}"
+        dd_instance: "{{ dd_new.instance }}"
+      check_mode: false
+
+    - name: Build the seed ISO (as nested-vcf roles/router_seed)
+      community.general.iso_create:
+        src_files:
+          - "{{ dd_dir }}/seed/meta-data"
+          - "{{ dd_dir }}/seed/user-data"
+          - "{{ dd_dir }}/seed/network-config"
+        dest_iso: "{{ dd_dir }}/seed.iso"
+        vol_ident: CIDATA                # cloud-init's NoCloud looks for the label cidata / CIDATA
+        interchange_level: 4             # ISO 9660:1999: level 3 still rejects '-' in meta-data / user-data
+        joliet: 3
+        rock_ridge: "1.09"               # keeps the lowercase names with '-' exactly as cloud-init expects them
+      check_mode: false
+      when: not dd_has_vm
+
+    - name: The seed at the demo datastore's root
+      community.vmware.vsphere_copy:
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+        src: "{{ dd_dir }}/seed.iso"
+        path: "{{ dd_seed_iso }}"
+      when: not ansible_check_mode and not dd_has_vm
+
+    # Clone powered off WITHOUT a cdrom spec: vmware_guest's configure_cdrom() returns early when its vm_obj is a
+    # template, and on a clone vm_obj is the template, so a cdrom spec on the clone is silently dropped (measured
+    # 2026-11-20: the guest booted with no seed, hostname "ubuntu", no IPv4). The seed goes on the clone below.
+    - name: Clone {{ dd.vm }} from {{ dd.template }} onto {{ dd.datastore }} (powered off)
+      community.vmware.vmware_guest:
+        datacenter: "{{ dd_vc.datacenter }}"
+        cluster: "{{ dd.cluster }}"
+        folder: "{{ dd_folder }}"
+        name: "{{ dd.vm }}"
+        template: "{{ dd.template }}"
+        datastore: "{{ dd.datastore }}"
+        annotation: "dsgrow-demo {{ dd_new.instance }}"
+        hardware:
+          num_cpus: "{{ dd.vcpu }}"
+          memory_mb: "{{ dd.memory_mb }}"
+        state: poweredoff
+      register: di_clone
+      when: not ansible_check_mode and not dd_has_vm
+
+    - name: Record the VM at once (before the waits and asserts)
+      ansible.builtin.copy:
+        content: "{{ dd_new | combine({'vm': dd.vm, 'vm_uuid': di_clone.instance.instance_uuid}) | to_nice_json(indent=2) }}\n"
+        dest: "{{ dd_state_file }}"
+        mode: "0600"
+      when: not ansible_check_mode and di_clone is changed
+
+    # The template's own CD-ROM is IDE 1:0 (from the OVA, read 2026-11-20 by tests/probes/demo_guest_net.yml); editing
+    # it keeps one drive. IDE allows no hot-add, so this runs while the clone is still off: just cloned, or a resumed
+    # run that stopped before the power-on.
+    - name: The seed on {{ dd.vm }}'s CD-ROM (IDE 1:0, connected at power-on)
+      community.vmware.vmware_guest:
+        datacenter: "{{ dd_vc.datacenter }}"
+        folder: "{{ dd_folder }}"
+        name: "{{ dd.vm }}"
+        cdrom:
+          - controller_type: ide
+            controller_number: 1
+            unit_number: 0
+            type: iso
+            iso_path: "[{{ dd.datastore }}] {{ dd_seed_iso }}"
+        state: present
+      when: >-
+        not ansible_check_mode and
+        (di_clone is changed or (dd_has_vm and dd_vm.hw_power_status == 'poweredOff'))
+
+    - name: Power on {{ dd.vm }}
+      community.vmware.vmware_guest:
+        datacenter: "{{ dd_vc.datacenter }}"
+        folder: "{{ dd_folder }}"
+        name: "{{ dd.vm }}"
+        state: poweredon
+      when: not ansible_check_mode
+
+    - name: VMware Tools answer
+      community.vmware.vmware_guest_tools_wait:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+        timeout: 600
+      when: not ansible_check_mode
+
+    - name: The VM read back
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+      register: di_vm
+      when: not ansible_check_mode
+
+    - name: Its disk is on the demo datastore
+      ansible.builtin.assert:
+        that:
+          - di_vm.instance.hw_datastores == [dd.datastore]
+          - di_vm.instance.hw_power_status == 'poweredOn'
+        fail_msg: "{{ dd.vm }}: datastores {{ di_vm.instance.hw_datastores }}, power {{ di_vm.instance.hw_power_status }}"
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: The VM's CD-ROMs
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+        schema: vsphere
+        properties: [config.hardware.device]
+      register: di_dev
+      when: not ansible_check_mode
+
+    # Fail here, not after a 10-minute SSH wait: without the seed the guest has no address and no key
+    - name: The seed is on a connected CD-ROM
+      vars:
+        di_cds: >-
+          {{ di_dev.instance.config.hardware.device | selectattr('_vimtype', 'defined')
+             | selectattr('_vimtype', 'equalto', 'vim.vm.device.VirtualCdrom') | list }}
+        di_seeded: >-
+          {{ di_cds | selectattr('backing.fileName', 'defined')
+             | selectattr('backing.fileName', 'equalto', '[' ~ dd.datastore ~ '] ' ~ dd_seed_iso)
+             | selectattr('connectable.connected') | list }}
+      ansible.builtin.assert:
+        that: di_seeded | length == 1
+        fail_msg: >-
+          {{ dd.vm }}: no connected CD-ROM holds [{{ dd.datastore }}] {{ dd_seed_iso }}; CD-ROMs:
+          {{ di_cds | map(attribute='deviceInfo.summary') | list }}. The guest boots without its seed (no IP, no key):
+          clean up and initialize again
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: Record the VM
+      ansible.builtin.copy:
+        content: "{{ dd_new | combine({'vm': dd.vm, 'vm_uuid': di_vm.instance.instance_uuid}) | to_nice_json(indent=2) }}\n"
+        dest: "{{ dd_state_file }}"
+        mode: "0600"
+      when: not ansible_check_mode
+
+    - name: The guest for SSH
+      ansible.builtin.include_tasks: tasks/guest_host.yml
+
+- name: Initialize the demo - the guest answers
+  hosts: dsgrow_demo_guest
+  gather_facts: false
+  vars_files: *dd_vars_files
+  tasks:
+    - name: SSH through the router
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+      when: not ansible_check_mode
+
+    - name: Cloud-init finished
+      ansible.builtin.command: cloud-init status --wait
+      register: dg_ci
+      changed_when: false
+      failed_when: "dg_ci.rc != 0 or 'status: done' not in dg_ci.stdout"
+      when: not ansible_check_mode
+
+    - name: It is the demo guest
+      ansible.builtin.command: hostname
+      register: dg_name
+      changed_when: false
+      failed_when: dg_name.stdout | trim != dd.vm
+      when: not ansible_check_mode
+
+- name: Initialize the demo - VCF Ops knows the datastore, Slack
+  hosts: localhost
+  gather_facts: false
+  vars_files: *dd_vars_files
+  tasks:
+    - name: VCF Ops has discovered {{ dd.datastore }}
+      ansible.builtin.include_tasks: tasks/vcfops_wait.yml
+      vars:
+        dv_moid: "{{ dd_new.datastore_moid }}"
+        dv_vcenter_uuid: "{{ dd_new.vcenter_uuid }}"
+      when: not ansible_check_mode
+
+    - name: Slack - demo ready
+      ansible.builtin.include_tasks: tasks/slack_note.yml
+      vars:
+        dd_note: >-
+          :white_check_mark: *Demo ready.* FlashArray {{ dd.array }} volume `{{ dd.volume }}` ({{ dd.size_gib }} GiB)
+          -> VMFS datastore `{{ dd.datastore }}` on {{ dd.esx_hosts | join(', ') }} -> VM `{{ dd.vm }}` ({{ dd.ip }}).
+          Next: "start the demo" adds a thick disk that takes the datastore to {{ dd.fill_pct }} % at once.
+      when: not ansible_check_mode
+
+    - name: Ready
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'check mode: nothing was changed' if ansible_check_mode else
+             'demo ready: ' ~ dd.volume ~ ' -> ' ~ dd.datastore ~ ' -> ' ~ dd.vm ~ ' (' ~ dd.ip ~ '); record ' ~ dd_state_file }}

@@ -1,0 +1,12 @@
+---
+# In: dsgrow_request.blocks, dsgrow_slack_status (mrkdwn), dsgrow_slack_keep_actions (default false).
+# Out: dsgrow_slack_blocks: the proposal in its order without any earlier status line, plus the new status line;
+# without the buttons unless dsgrow_slack_keep_actions (a failed run offers them again, see execute.yml).
+# (A loop, not rejectattr: most blocks have no block_id, and ansible-core 2.21 fails on the missing attribute.)
+- name: Status blocks
+  ansible.builtin.set_fact:
+    dsgrow_slack_blocks: >-
+      {% set out = [] %}{% for b in dsgrow_request.blocks | default([]) %}
+      {%- if b.get('block_id') != 'dsgrow_status' and (dsgrow_slack_keep_actions | default(false) | bool or b.get('type') != 'actions') %}
+      {%- set _ = out.append(b) %}{% endif %}{% endfor %}
+      {{- out + [{'type': 'section', 'block_id': 'dsgrow_status', 'text': {'type': 'mrkdwn', 'text': dsgrow_slack_status}}] }}

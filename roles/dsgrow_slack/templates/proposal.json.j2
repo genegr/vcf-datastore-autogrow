@@ -1,0 +1,67 @@
+{#- The proposal message (skill slack-approval-bridge "Message"). Built as data, emitted as JSON. -#}
+{%- set ds = dsgrow_datastore_name | dsgrow_slack_escape -%}
+{%- set vol = dsgrow_fa_match.volume -%}
+{%- set base = {'rid': dsgrow_rid, 'vc': dsgrow_vc.hostname, 'ds': dsgrow_datastore_name, 'dev': dsgrow_device,
+                'cur': dsgrow_current_bytes | int, 'exp': dsgrow_expires | int} -%}
+{%- set blocks = [] -%}
+{%- set _ = blocks.append({'type': 'header', 'text': {'type': 'plain_text', 'emoji': true,
+      'text': (':floppy_disk: ' ~ dsgrow_datastore_name ~ ' is ' ~ dsgrow_used_pct ~ '% full') | truncate(150)}}) -%}
+{%- set _ = blocks.append({'type': 'section', 'fields': [
+      {'type': 'mrkdwn', 'text': '*Datastore*\n' ~ ds ~ ' (VMFS ' ~ dsgrow_backing.vmfs_major_version ~ ')'},
+      {'type': 'mrkdwn', 'text': '*vCenter*\n' ~ (dsgrow_vc.hostname | dsgrow_slack_escape)},
+      {'type': 'mrkdwn', 'text': '*Used / capacity*\n' ~ (dsgrow_backing.used_bytes | dsgrow_human_bytes) ~ ' / '
+                                  ~ (dsgrow_backing.capacity_bytes | dsgrow_human_bytes)},
+      {'type': 'mrkdwn', 'text': '*Hosts*\n' ~ (dsgrow_backing.hosts | map(attribute='name') | join(', ') | dsgrow_slack_escape)},
+      {'type': 'mrkdwn', 'text': '*FlashArray volume*\n' ~ (dsgrow_fa_match.array.name | dsgrow_slack_escape) ~ ' / '
+                                  ~ (vol.name | dsgrow_slack_escape) ~ ' (' ~ (vol.provisioned | dsgrow_human_bytes) ~ ')'},
+      {'type': 'mrkdwn', 'text': '*Array free now*\n' ~ dsgrow_array_free_pct ~ '%'}]}) -%}
+{%- if dsgrow_options.options | length > 0 -%}
+{%-   set lines = [] -%}
+{%-   for o in dsgrow_options.options -%}
+{%-     set _ = lines.append('• *' ~ (o.target_bytes | dsgrow_human_bytes) ~ '* (+' ~ (o.growth_bytes | dsgrow_human_bytes)
+          ~ '): datastore ' ~ o.utilization_after_pct ~ '% used, array free after '
+          ~ (dsgrow_fa_match.space | dsgrow_array_free_pct_after(o.growth_bytes)) ~ '%') -%}
+{%-   endfor -%}
+{%-   set _ = blocks.append({'type': 'section', 'text': {'type': 'mrkdwn', 'text': '*Proposed sizes*\n' ~ (lines | join('\n'))}}) -%}
+{%-   set buttons = [] -%}
+{#- No size is styled as the default (owner 2026-11-20: a green first button drew the click twice), and every size
+    button asks Slack's confirmation dialog first, naming the size, so the approver sees what is sent (owner
+    2026-11-20, kept after a brief removal). -#}
+{%-   for o in dsgrow_options.options -%}
+{%-     set size = o.target_bytes | dsgrow_human_bytes -%}
+{%-     set b = {'type': 'button', 'action_id': 'dsgrow_approve_' ~ loop.index,
+               'text': {'type': 'plain_text', 'text': o.label | truncate(75)},
+               'value': base | combine({'tgt': o.target_bytes}) | to_json(separators=[',', ':']),
+               'confirm': {'title': {'type': 'plain_text', 'text': ('Grow to ' ~ size ~ '?') | truncate(100)},
+                           'text': {'type': 'mrkdwn', 'text': ('Grow *' ~ ds ~ '* from ' ~ (dsgrow_current_bytes | dsgrow_human_bytes)
+                                    ~ ' to *' ~ size ~ '* (+' ~ (o.growth_bytes | dsgrow_human_bytes) ~ ') on FlashArray '
+                                    ~ (dsgrow_fa_match.array.name | dsgrow_slack_escape) ~ '. Grow only: this cannot be undone.') | truncate(300)},
+                           'confirm': {'type': 'plain_text', 'text': ('Grow to ' ~ size) | truncate(30)},
+                           'deny': {'type': 'plain_text', 'text': 'Cancel'}}} -%}
+{%-     set _ = buttons.append(b) -%}
+{%-   endfor -%}
+{%-   set _ = buttons.append({'type': 'button', 'action_id': 'dsgrow_custom', 'text': {'type': 'plain_text', 'text': 'Custom…'},
+            'value': base | to_json(separators=[',', ':'])}) -%}
+{%-   set _ = buttons.append({'type': 'button', 'action_id': 'dsgrow_deny', 'style': 'danger', 'text': {'type': 'plain_text', 'text': 'Deny'},
+            'value': base | to_json(separators=[',', ':'])}) -%}
+{%-   set _ = blocks.append({'type': 'actions', 'block_id': 'dsgrow_actions', 'elements': buttons}) -%}
+{%- else -%}
+{%-   set lines = [] -%}
+{%-   for r in dsgrow_options.refused -%}
+{%-     set _ = lines.append('• ' ~ (r.target_bytes | dsgrow_human_bytes) ~ ': ' ~ (r.reasons | join('; ') | dsgrow_slack_escape)) -%}
+{%-   endfor -%}
+{%-   set _ = blocks.append({'type': 'section', 'text': {'type': 'mrkdwn', 'text':
+          ':no_entry: *No size can be proposed within the policy*\n' ~ (lines | join('\n'))}}) -%}
+{%-   set _ = blocks.append({'type': 'actions', 'block_id': 'dsgrow_actions', 'elements': [
+          {'type': 'button', 'action_id': 'dsgrow_deny', 'style': 'danger', 'text': {'type': 'plain_text', 'text': 'Deny'},
+           'value': base | to_json(separators=[',', ':'])}]}) -%}
+{%- endif -%}
+{%- set link = dsgrow_alert.link | default('') -%}
+{%- set _ = blocks.append({'type': 'context', 'elements': [{'type': 'mrkdwn', 'text':
+      ('<' ~ link ~ '|VCF Operations alert>' if link is match('^https?://') else 'VCF Operations alert')
+      ~ ': ' ~ (dsgrow_alert.alert_definition | default('') | dsgrow_slack_escape)
+      ~ ' · ' ~ (dsgrow_alert.criticality | default('') | dsgrow_slack_escape)
+      ~ ' · device ' ~ dsgrow_device
+      ~ ' · request ' ~ dsgrow_rid
+      ~ ' · expires <!date^' ~ (dsgrow_expires | int) ~ '^{date_short_pretty} {time}|' ~ dsgrow_expires_iso ~ '>'}]}) -%}
+{{ blocks | to_json }}

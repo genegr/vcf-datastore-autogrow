@@ -1,0 +1,9 @@
+---
+# Lab vcf9-1 demo override (CLAUDE.md): the 200 GiB demo datastore (demo/init.yml) filled to ~85 % (~170 GiB used)
+# gets options of about 240-256 / 256-272 / 272-288 GiB (depending on the used space when propose runs, 80-85 %),
+# inside the 50 % cap, with a 16 GiB step; the 256 GiB
+# default would round every option to 256 GiB at once.
+dsgrow_size_step_bytes: 17179869184         # 16 GiB
+
+# The time-remaining symptom's threshold (setup/vcfops.yml)
+dsgrow_time_remaining_days: 30

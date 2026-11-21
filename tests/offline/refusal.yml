@@ -1,0 +1,18 @@
+---
+# In: item {what, target, needle}. The execute preflight must refuse with a message containing the needle.
+- name: "Refusal: {{ item.what }}"
+  block:
+    - name: "Preflight with {{ item.target | int | dsgrow_human_bytes }}"
+      ansible.builtin.include_role:
+        name: dsgrow_preflight
+      vars:
+        dsgrow_preflight_mode: execute
+        dsgrow_target_bytes: "{{ item.target }}"
+    - name: Must not get here
+      ansible.builtin.fail:
+        msg: "{{ item.what }} was accepted"
+  rescue:
+    - name: Refused for the right reason
+      ansible.builtin.assert:
+        that: item.needle in ansible_failed_result.msg
+        fail_msg: "expected '{{ item.needle }}' in: {{ ansible_failed_result.msg }}"

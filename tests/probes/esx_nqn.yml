@@ -1,0 +1,66 @@
+---
+# READ-ONLY: where the demo hosts' NVMe host NQN can be read through vCenter (nested-vcf's skill flasharray-nvme says
+# the API has none; checked here on vSphere 9): the storage device NVMe topology and the host bus adapters of each
+# demo host, searched for "nqn". Also the FlashArray host objects on the demo array (name, nqn, hgroup).
+#   bash tools/probe.sh tests/probes/esx_nqn.yml
+# Output: .state/probes/esx_nqn.json (no secrets).
+- name: ESXi host NQNs and the array's host objects
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware:
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+    group/everpure.flasharray.everpure.flasharray:
+      fa_url: "{{ dd_fa_url }}"
+      api_token: "{{ dsgrow_fa_token }}"
+      disable_warnings: true
+  tasks:
+    - name: Load the dsgrow secrets
+      ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml
+
+    - name: Storage device of each demo host
+      community.vmware.vmware_host_facts:
+        esxi_hostname: "{{ item }}"
+        schema: vsphere
+        properties:
+          - config.storageDevice.nvmeTopology
+          - config.storageDevice.hostBusAdapter
+      loop: "{{ dd.esx_hosts }}"
+      register: pn_hosts
+
+    - name: The array's host objects
+      everpure.flasharray.purefa_info:
+        gather_subset: [hosts, hgroups]
+      register: pn_fa
+
+    - name: Save
+      ansible.builtin.copy:
+        content: >-
+          {{ {'esx': pn_hosts.results | map(attribute='ansible_facts') | list,
+              'fa_hosts': pn_fa.purefa_info.hosts, 'fa_hgroups': pn_fa.purefa_info.hgroups} | to_nice_json(indent=2) }}
+        dest: /work/.state/probes/esx_nqn.json
+        mode: "0600"
+
+    - name: Every string containing "nqn" per host, and the array's hosts
+      ansible.builtin.debug:
+        msg:
+          esx: >-
+            {{ pn_hosts.results | map(attribute='ansible_facts') | map('to_json')
+               | map('regex_findall', '"([A-Za-z_]*)": "(nqn\.[^"]+)"') | list }}
+          fa_hosts: >-
+            {{ pn_fa.purefa_info.hosts | dict2items | selectattr('key', 'match', 'vcf9-1-esx0[789]')
+               | map('community.general.json_query', '{name: key, nqn: value.nqn, hgroup: value.hgroup}') | list }}
+          fa_hgroups: >-
+            {{ pn_fa.purefa_info.hgroups | dict2items | selectattr('key', 'search', 'w02')
+               | map('community.general.json_query', '{name: key, hosts: value.hosts, vols: value.vols}') | list }}

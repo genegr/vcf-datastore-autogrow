@@ -1,0 +1,9 @@
+---
+# In: dsgrow_alert, dsgrow_vc, dsgrow_datastore_name, dsgrow_backing, dsgrow_fa_match, dsgrow_device, dsgrow_options,
+#     dsgrow_used_pct, dsgrow_array_free_pct, dsgrow_current_bytes, dsgrow_rid, dsgrow_expires.
+# Out: dsgrow_slack_blocks, dsgrow_slack_text (notification fallback).
+- name: Proposal blocks
+  ansible.builtin.set_fact:
+    dsgrow_slack_blocks: "{{ lookup('ansible.builtin.template', 'proposal.json.j2') | from_json }}"
+    dsgrow_slack_text: >-
+      Datastore {{ dsgrow_datastore_name }} is {{ dsgrow_used_pct }}% full: expansion proposed

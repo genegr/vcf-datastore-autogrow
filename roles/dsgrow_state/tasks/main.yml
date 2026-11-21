@@ -1,0 +1,10 @@
+---
+# Request files and per-datastore locks under dsgrow_state_dir (replaces AAP job artifacts; CLAUDE.md rules 5 and 9).
+#   requests/<rid>.json   everything about one request: identifiers, offered options, Slack channel/ts, blocks,
+#                         status (proposed | executing | done | failed | cleared), approver, before/after sizes
+#   locks/<vc>__<ds>.json {rid, status, expires}: "held" while status is proposed or executing and not expired
+# Never deletes: a lock is released by writing status released (rule 8, no state: absent anywhere).
+# Use with tasks_from: dirs, lock_read, lock_write, request_read, request_write.
+- name: Use tasks_from
+  ansible.builtin.fail:
+    msg: "roles/dsgrow_state has no main entry point; use tasks_from"

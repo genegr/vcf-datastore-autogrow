@@ -1,0 +1,34 @@
+---
+# Step 3 (LAB CHANGE, gated): least-privilege vCenter access for dsgrow on every vCenter in dsgrow_vcenters.
+#   role        `dsgrow`: Host.Config.Storage (rescan, VMFS expand) on top of the implicit read privileges
+#               (community.vmware.vmware_local_role_manager)
+#   permission  dsgrow@<sso domain> -> role dsgrow on the datacenter, propagating
+#               (community.vmware.vmware_object_role_permission)
+#   check       the user logs in (community.vmware.vmware_about_info as dsgrow)
+#   user        dsgrow@<sso domain>, created when `govc sso.user.ls` does not list it: no Ansible module creates SSO
+#               users, so `govc sso.user.create` (SSO admin API, govc 0.55.2 in the toolbox) is the guarded command;
+#               its generated password is stored first in .state/secrets/vcenter-<key>.yml (encrypted)
+# Admin side: administrator@<sso domain> with nested-vcf's vault_sso_admin_password (read-only use of its vault).
+# The exact privileges are measured on the lab by the first real expand; record them in skill vmfs-datastore-expand.
+# Rollback (by hand): remove the permission, the role and the SSO user in the vSphere Client.
+#   bash tools/setup.sh setup/vcenter_account.yml [--confirm vcenter_account.yml]
+- name: Dsgrow vCenter account, role and permission
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  vars:
+    va_role: dsgrow
+    va_privileges: [Host.Config.Storage]
+  tasks:
+    - name: Secrets so far
+      ansible.builtin.include_tasks: tasks/secrets_load.yml
+
+    - name: One vCenter
+      ansible.builtin.include_tasks: tasks/vcenter_account_one.yml
+      loop: "{{ dsgrow_vcenters }}"
+      loop_control:
+        loop_var: va_vc
+        label: "{{ va_vc.hostname }}"

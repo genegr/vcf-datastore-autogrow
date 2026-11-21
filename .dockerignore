@@ -1,0 +1,9 @@
+# The bridge image builds from the repo root: never send secrets, state or local junk to the Docker daemon.
+.state/
+state/
+.git/
+.venv/
+**/__pycache__/
+.pytest_cache/
+tests/
+docs/

@@ -1,0 +1,59 @@
+---
+# Datastore -> its one extent device -> FlashArray serial -> exactly one volume on exactly one array (CLAUDE.md rule 2).
+# Read-only. In: dsgrow_vc, dsgrow_datastore_name.
+# Out: dsgrow_backing, dsgrow_device, dsgrow_fa_serial, dsgrow_fa_match ({array, volume, space}), dsgrow_hosts.
+- name: Read the datastore's backing
+  ansible.builtin.include_tasks: backing.yml
+
+- name: One VMFS 6 datastore, one extent, usable on every host
+  ansible.builtin.assert:
+    that:
+      - dsgrow_backing_matches | int == 1
+      - dsgrow_backing.type | default('') == 'VMFS'
+      - dsgrow_backing.vmfs_major_version | default(0) | int == 6
+      - dsgrow_backing.extents | default([]) | length == 1
+      - dsgrow_backing.maintenance_mode | default('') == 'normal'
+      - dsgrow_backing.accessible | default(false)
+      - dsgrow_backing.hosts | default([]) | length > 0
+      - dsgrow_backing.hosts | rejectattr('mounted') | list | length == 0
+      - dsgrow_backing.hosts | rejectattr('accessible') | list | length == 0
+    fail_msg: >-
+      {{ dsgrow_datastore_name }} in {{ dsgrow_vc.hostname }} can't be grown automatically:
+      {% if dsgrow_backing_matches | int != 1 %}{{ dsgrow_backing_matches }} datastores have that name
+      {%- else %}type {{ dsgrow_backing.type }}, VMFS {{ dsgrow_backing.vmfs_major_version }},
+      {{ dsgrow_backing.extents | length }} extent(s), maintenance {{ dsgrow_backing.maintenance_mode }},
+      hosts not mounted/accessible: {{ (dsgrow_backing.hosts | rejectattr('mounted') | map(attribute='name') | list)
+      + (dsgrow_backing.hosts | rejectattr('accessible') | map(attribute='name') | list) | unique | list }}{% endif %}
+    quiet: true
+
+- name: The extent is an Everpure FlashArray device
+  ansible.builtin.assert:
+    that: dsgrow_backing.extents[0] | dsgrow_is_everpure_device
+    fail_msg: >-
+      {{ dsgrow_datastore_name }} sits on {{ dsgrow_backing.extents[0] }}, not an Everpure FlashArray device
+      (naa.624a9370... or eui.00...24a937...)
+    quiet: true
+
+- name: Device and serial
+  ansible.builtin.set_fact:
+    dsgrow_device: "{{ dsgrow_backing.extents[0] }}"
+    dsgrow_fa_serial: "{{ dsgrow_backing.extents[0] | dsgrow_device_to_fa_serial }}"
+    dsgrow_hosts: "{{ dsgrow_backing.hosts | map(attribute='name') | list }}"
+
+- name: Find the volume on the arrays
+  ansible.builtin.include_role:
+    name: dsgrow_flasharray
+    tasks_from: find
+
+- name: Exactly one volume on exactly one array
+  ansible.builtin.assert:
+    that: dsgrow_fa_matches | length == 1
+    fail_msg: >-
+      serial {{ dsgrow_fa_serial }} ({{ dsgrow_device }}) matches {{ dsgrow_fa_matches | length }} volumes on the
+      configured arrays {{ dsgrow_flasharrays | map(attribute='name') | list }}
+      {%- if dsgrow_fa_matches | length > 1 %}: {{ dsgrow_fa_matches | map(attribute='array.name') | list }}{% endif %}
+    quiet: true
+
+- name: The match
+  ansible.builtin.set_fact:
+    dsgrow_fa_match: "{{ dsgrow_fa_matches | first }}"

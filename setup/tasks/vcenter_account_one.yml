@@ -1,0 +1,100 @@
+---
+# In: va_vc (an entry of dsgrow_vcenters), va_role, va_privileges.
+- name: "{{ va_vc.hostname }}: identities"
+  ansible.builtin.set_fact:
+    va_sso_domain: "{{ va_vc.username.split('@')[1] }}"
+    va_admin: "administrator@{{ va_vc.username.split('@')[1] }}"
+    va_secret_var: "dsgrow_secret_vc_password_{{ va_vc.key }}"
+    va_govc_env:
+      GOVC_URL: "https://{{ va_vc.hostname }}/sdk"
+      GOVC_USERNAME: "administrator@{{ va_vc.username.split('@')[1] }}"
+      GOVC_PASSWORD: "{{ vault_sso_admin_password }}"
+      GOVC_INSECURE: "1"
+      GOVC_PERSIST_SESSION: "false"
+  no_log: true
+
+# --- the SSO user: no Ansible module creates SSO users; govc sso.user.create (SSO admin API, govc 0.55.2 in the
+#     toolbox) is the guarded command, run only when sso.user.ls does not list the exact name.
+- name: "{{ va_vc.hostname }}: SSO users (read)"
+  ansible.builtin.command:
+    argv: [govc, sso.user.ls]
+  environment: "{{ va_govc_env }}"
+  register: va_users
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: "{{ va_vc.hostname }}: state"
+  ansible.builtin.set_fact:
+    va_user_exists: "{{ 'dsgrow' in (va_users.stdout_lines | map('split') | map('first') | list) }}"
+    va_have_password: "{{ lookup('ansible.builtin.vars', va_secret_var, default='') | length > 0 }}"
+
+- name: "{{ va_vc.hostname }}: what this run does"
+  ansible.builtin.debug:
+    msg: >-
+      SSO user dsgrow@{{ va_sso_domain }}: {{ 'exists' if va_user_exists else 'will be created' }};
+      password: {{ 'stored' if va_have_password else 'will be generated into .state/secrets/vcenter-' ~ va_vc.key ~ '.yml' }};
+      role {{ va_role }} {{ va_privileges }} and its permission on {{ va_vc.datacenter }}: ensured
+
+- name: "{{ va_vc.hostname }}: an existing user needs its stored password (no silent reset)"
+  ansible.builtin.assert:
+    that: not va_user_exists or va_have_password
+    fail_msg: "dsgrow@{{ va_sso_domain }} exists but its password is not in .state/secrets/vcenter-{{ va_vc.key }}.yml"
+    quiet: true
+
+- name: "{{ va_vc.hostname }}: a password for the SSO policy (8-20, upper, lower, digit, special), stored before use"
+  ansible.builtin.include_tasks: secret_write.yml
+  vars:
+    dsgrow_secret_name: "vcenter-{{ va_vc.key }}"
+    dsgrow_secret_data: >-
+      {{ {va_secret_var: lookup('ansible.builtin.password', '/dev/null', length=14, chars=['ascii_letters', 'digits'])
+          ~ 'Kq7#x'} }}
+  when: not va_have_password
+
+- name: "{{ va_vc.hostname }}: reload the secrets"
+  ansible.builtin.include_tasks: secrets_load.yml
+  when: not va_have_password and not ansible_check_mode
+
+- name: "{{ va_vc.hostname }}: create dsgrow@{{ va_sso_domain }} (govc sso.user.create: no module exists)"
+  ansible.builtin.command:
+    argv: [govc, sso.user.create, -p, "{{ lookup('ansible.builtin.vars', va_secret_var) }}",
+           -d, "dsgrow automation (vsphere-dsgrow): rescan and VMFS expand", dsgrow]
+  environment: "{{ va_govc_env }}"
+  changed_when: true
+  no_log: true
+  when: not va_user_exists and not ansible_check_mode
+
+# --- role and permission (modules)
+- name: "{{ va_vc.hostname }}: role {{ va_role }}"
+  community.vmware.vmware_local_role_manager:
+    hostname: "{{ va_vc.hostname }}"
+    username: "{{ va_admin }}"
+    password: "{{ vault_sso_admin_password }}"
+    validate_certs: false
+    local_role_name: "{{ va_role }}"
+    local_privilege_ids: "{{ va_privileges }}"
+    action: set
+    state: present
+
+- name: "{{ va_vc.hostname }}: dsgrow@{{ va_sso_domain }} gets {{ va_role }} on {{ va_vc.datacenter }} (propagating)"
+  community.vmware.vmware_object_role_permission:
+    hostname: "{{ va_vc.hostname }}"
+    username: "{{ va_admin }}"
+    password: "{{ vault_sso_admin_password }}"
+    validate_certs: false
+    role: "{{ va_role }}"
+    principal: "{{ va_sso_domain | upper }}\\dsgrow"
+    object_name: "{{ va_vc.datacenter }}"
+    object_type: Datacenter
+    recursive: true
+    state: present
+  when: not ansible_check_mode or va_user_exists
+
+- name: "{{ va_vc.hostname }}: dsgrow logs in (read-back)"
+  community.vmware.vmware_about_info:
+    hostname: "{{ va_vc.hostname }}"
+    username: "{{ va_vc.username }}"
+    password: "{{ lookup('ansible.builtin.vars', va_secret_var) }}"
+    validate_certs: false
+  check_mode: false
+  when: not ansible_check_mode or va_have_password

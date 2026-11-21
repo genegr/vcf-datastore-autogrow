@@ -1,0 +1,101 @@
+---
+# READ-ONLY: why the demo guest does not answer on the app network. The VM's NICs (port group, connected, MAC), its
+# CD-ROM (the seed), its host, what VMware Tools reports (hostname, IPs, NICs) and the app port group's VLAN.
+#   bash tools/probe.sh tests/probes/demo_guest_net.yml
+- name: Demo guest network
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware:
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+  tasks:
+    - name: The VM as vCenter sees it
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.vm }}"
+        schema: vsphere
+        properties:
+          - runtime.powerState
+          - runtime.host
+          - runtime.bootTime
+          - guest.toolsRunningStatus
+          - guest.guestState
+          - guest.hostName
+          - guest.ipAddress
+          - guest.net
+          - config.hardware.device
+      register: gn_vm
+
+    - name: The app port group
+      community.vmware.vmware_dvs_portgroup_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        show_vlan_info: true
+        show_network_policy: false
+        show_port_policy: false
+        show_teaming_policy: false
+        show_uplinks: false
+      register: gn_pg
+
+    - name: The seed ISO on the demo datastore (read-only test)
+      community.vmware.vsphere_file:
+        hostname: "{{ dd_vc.hostname }}"
+        username: "{{ dd_admin }}"
+        password: "{{ vault_sso_admin_password }}"
+        validate_certs: false
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+        path: "{{ dd_seed_iso }}"
+        state: file
+      register: gn_iso
+      failed_when: false
+
+    - name: CD-ROMs and controllers in full
+      ansible.builtin.debug:
+        msg:
+          iso: "{{ gn_iso.msg | default(gn_iso.state | default('?')) }}"
+          devices: >-
+            {{ gn_vm.instance.config.hardware.device
+               | selectattr('_vimtype', 'search', 'Cdrom|IDEController|AHCIController|SATA')
+               | map('to_json') | list }}
+
+    - name: Summary
+      vars:
+        gn_dev: "{{ gn_vm.instance.config.hardware.device }}"
+        gn_nics: "{{ gn_dev | selectattr('macAddress', 'defined') | list }}"
+        gn_cds: "{{ gn_dev | selectattr('_vimtype', 'defined') | selectattr('_vimtype', 'equalto', 'vim.vm.device.VirtualCdrom') | list }}"
+      ansible.builtin.debug:
+        msg:
+          power: "{{ gn_vm.instance.runtime.powerState }}"
+          host_moref: "{{ gn_vm.instance.runtime.host }}"
+          boot_time: "{{ gn_vm.instance.runtime.bootTime }}"
+          tools: "{{ gn_vm.instance.guest.toolsRunningStatus }} / {{ gn_vm.instance.guest.guestState }}"
+          guest_hostname: "{{ gn_vm.instance.guest.hostName }}"
+          guest_ip: "{{ gn_vm.instance.guest.ipAddress }}"
+          guest_net: >-
+            {{ gn_vm.instance.guest.net | map(attribute='macAddress') | zip(
+                 gn_vm.instance.guest.net | map(attribute='ipAddress'),
+                 gn_vm.instance.guest.net | map(attribute='connected'),
+                 gn_vm.instance.guest.net | map(attribute='network')) | list }}
+          nics: >-
+            {{ gn_nics | map(attribute='deviceInfo') | map(attribute='label') | zip(
+                 gn_nics | map(attribute='macAddress'),
+                 gn_nics | map(attribute='connectable') | map(attribute='connected'),
+                 gn_nics | map(attribute='connectable') | map(attribute='startConnected'),
+                 gn_nics | map(attribute='backing') | map('to_json') | map('truncate', 200)) | list }}
+          cdroms: >-
+            {{ gn_cds | map(attribute='deviceInfo') | map(attribute='summary') | zip(
+                 gn_cds | map(attribute='connectable') | map(attribute='connected')) | list }}
+          app_portgroup: >-
+            {{ gn_pg.dvs_portgroup_info | dict2items | map(attribute='value') | flatten
+               | selectattr('portgroup_name', 'equalto', dd.portgroup) | map(attribute='vlan_info') | list }}

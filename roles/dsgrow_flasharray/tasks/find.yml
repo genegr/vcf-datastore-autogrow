@@ -1,0 +1,12 @@
+---
+# In: dsgrow_fa_serial (24 hex, upper case). Out: dsgrow_fa_matches: [{array, volume, space}] across every array.
+- name: No matches yet
+  ansible.builtin.set_fact:
+    dsgrow_fa_matches: []
+
+- name: Look for serial {{ dsgrow_fa_serial }} on each array
+  ansible.builtin.include_tasks: find_one.yml
+  loop: "{{ dsgrow_flasharrays }}"
+  loop_control:
+    loop_var: dsgrow_fa_array
+    label: "{{ dsgrow_fa_array.name }}"

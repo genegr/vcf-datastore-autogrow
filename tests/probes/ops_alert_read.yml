@@ -1,0 +1,94 @@
+---
+# READ-ONLY probe: is the dsgrow alert active on a datastore, and is the alert definition enabled in the policies?
+#   bash tools/probe.sh tests/probes/ops_alert_read.yml [-e pr_ds=vcf9-1-w02-demo01]
+- name: The dsgrow alert state in VCF Operations
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pr_api: https://ops.vcf9-1.lab/suite-api/api
+    pr_ds: vcf9-1-w02-demo01
+    pr_out: /work/.state/probes
+  vars_files:
+    - /nvcf/labs/vcf9-1.vault.yml
+  tasks:
+    - name: Token for the local admin
+      ansible.builtin.uri:
+        url: "{{ pr_api }}/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: pr_tok
+      no_log: true
+
+    - name: Read, then always release
+      block:
+        - name: The datastore resource
+          ansible.builtin.uri:
+            url: "{{ pr_api }}/resources?adapterKind=VMWARE&resourceKind=Datastore&name={{ pr_ds | urlencode }}"
+            headers: &pr_h {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+          register: pr_res
+          no_log: true
+
+        - name: Its alerts (all, newest first)
+          ansible.builtin.uri:
+            url: "{{ pr_api }}/alerts?resourceId={{ pr_res.json.resourceList[0].identifier }}&pageSize=50"
+            headers: *pr_h
+            validate_certs: false
+          register: pr_alerts
+          no_log: true
+
+        - name: Its symptoms (active)
+          ansible.builtin.uri:
+            url: "{{ pr_api }}/symptoms?resourceId={{ pr_res.json.resourceList[0].identifier }}&activeOnly=true"
+            headers: *pr_h
+            validate_certs: false
+            status_code: [200, 400, 404]
+          register: pr_sym
+          no_log: true
+
+        - name: The policies the datastore is under (effective policy)
+          ansible.builtin.uri:
+            url: "{{ pr_api }}/resources/{{ pr_res.json.resourceList[0].identifier }}/policies"
+            headers: *pr_h
+            validate_certs: false
+            status_code: [200, 400, 404]
+          register: pr_pol
+          no_log: true
+
+        - name: All policies
+          ansible.builtin.uri:
+            url: "{{ pr_api }}/policies"
+            headers: *pr_h
+            validate_certs: false
+          register: pr_pols
+          no_log: true
+
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ pr_api }}/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          when: pr_tok.json.token is defined
+          no_log: true
+
+    - name: Save (no secrets)
+      ansible.builtin.copy:
+        content: >-
+          {{ {'resource': pr_res.json.resourceList[0] | default({}), 'alerts': pr_alerts.json, 'symptoms': pr_sym.json | default({}),
+              'resource_policies': pr_pol.json | default({}), 'policies': pr_pols.json} | to_nice_json(indent=2) }}
+        dest: "{{ pr_out }}/ops_alert_read.json"
+        mode: "0600"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          alerts: "{{ pr_alerts.json.alerts | default([]) | map('community.general.json_query', '{name: alertDefinitionName, status: status, ctrl: controlState, start: startTimeUTC, cancel: cancelTimeUTC}') | list }}"
+          active_symptoms: "{{ (pr_sym.json | default({})).symptom | default([]) | map(attribute='symptomDefinitionId', default='?') | list }}"
+          resource_policy: "{{ pr_pol.json | default('n/a') | to_json | truncate(600) }}"
+          policies: "{{ pr_pols.json.policySummaries | map('community.general.json_query', '{name: name, id: id, default: defaultPolicy}') | list }}"

@@ -1,0 +1,56 @@
+---
+# READ-ONLY probe: dsgrow's own read path end to end, as the least-privilege dsgrow accounts (vCenter SSO user, array
+# storage_admin token; .state/secrets), against a datastore: the alert check, the vCenter search (no
+# ${ADAPTER_INSTANCE} in VCF Ops 9.1.1), the backing, eui -> serial -> the one volume on the arrays, and the propose
+# preflight with its size options. Nothing is written (no state files, no Slack).
+#   bash tools/probe.sh tests/probes/resolve_read.yml [-e pr_ds=vcf9-1-w02-demo01]
+- name: Dsgrow resolve + preflight, read-only
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/policy.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+  vars:
+    pr_ds: vcf9-1-w02-demo01
+    dsgrow_alert:
+      schema: dsgrow.vcfops.v1
+      event: new
+      resource_kind: Datastore
+      resource_name: "{{ pr_ds }}"
+      alert_definition: dsgrow - datastore capacity
+  tasks:
+    - name: The dsgrow secrets
+      ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml
+
+    - name: Alert input
+      ansible.builtin.include_role:
+        name: dsgrow_resolve
+        tasks_from: alert_input
+
+    - name: Which vCenter (searched, as with a real VCF Ops payload)
+      ansible.builtin.include_role:
+        name: dsgrow_resolve
+        tasks_from: pick_vcenter
+
+    - name: Resolve
+      ansible.builtin.include_role:
+        name: dsgrow_resolve
+
+    - name: Preflight (propose)
+      ansible.builtin.include_role:
+        name: dsgrow_preflight
+      vars:
+        dsgrow_preflight_mode: propose
+
+    - name: Result
+      ansible.builtin.debug:
+        msg:
+          - "vCenter {{ dsgrow_vc.hostname }} (searched {{ dsgrow_vc_candidates | length }}), hosts {{ dsgrow_hosts }}"
+          - "device {{ dsgrow_device }} -> serial {{ dsgrow_fa_serial }} -> {{ dsgrow_fa_match.array.name }} / {{ dsgrow_fa_match.volume.name }}"
+          - "volume {{ dsgrow_current_bytes | dsgrow_human_bytes }}; VMFS {{ dsgrow_backing.capacity_bytes | dsgrow_human_bytes }}, used {{ dsgrow_used_bytes | dsgrow_human_bytes }} ({{ dsgrow_used_pct }} %)"
+          - "array free now {{ dsgrow_array_free_pct }} %"
+          - "options: {{ dsgrow_options.options | map(attribute='label') | list }}"
+          - "refused: {{ dsgrow_options.refused | map(attribute='reasons') | list }}"

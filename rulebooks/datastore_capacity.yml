@@ -1,0 +1,74 @@
+---
+# dsgrow: the hub of the demo (skill eda-rulebook). Two sources:
+#   vcfops     VCF Operations' Webhook Notification plugin (payload dsgrow.vcfops.v1) -> propose / cleared
+#   approvals  the Slack bridge only: loopback, own token, HMAC (payload dsgrow.approval.v1) -> execute
+# execute.yml, the only writer, runs only for an event whose meta.source.name is "approvals" (CLAUDE.md rule 11);
+# ansible-rulebook sets that field itself, a sender can't forge it (the body sits under payload).
+# Secrets come from --env-vars DSGROW_EDA_VCFOPS_TOKEN,DSGROW_EDA_APPROVALS_TOKEN,DSGROW_APPROVAL_HMAC_SECRET.
+# Ports: 5000 is taken on the run host by another project (2026-11-19).
+- name: dsgrow datastore capacity
+  hosts: all
+  execution_strategy: sequential        # one playbook at a time: no two approvals race on the same request
+  sources:
+    - name: vcfops
+      ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 5080
+        token: "{{ DSGROW_EDA_VCFOPS_TOKEN }}"
+    - name: approvals
+      ansible.eda.webhook:
+        host: 127.0.0.1
+        port: 5081
+        token: "{{ DSGROW_EDA_APPROVALS_TOKEN }}"
+        hmac_secret: "{{ DSGROW_APPROVAL_HMAC_SECRET }}"
+        hmac_algo: sha256
+        hmac_header: x-dsgrow-signature
+        hmac_format: hex
+  rules:
+    - name: Propose expansion for a datastore capacity alert
+      condition: >
+        event.meta.source.name == "vcfops"
+        and event.payload.schema == "dsgrow.vcfops.v1"
+        and event.payload.event in ["new", "updated"]
+        and event.payload.resource_kind == "Datastore"
+        and event.payload.alert_definition in vars.dsgrow_alert_definitions
+        and event.payload.alert_id is defined
+      # Per ALERT, not per datastore (owner 2026-11-21: "alert the admin every time the datastore passes the critical
+      # limit"): every crossing is a new VCF Ops alert with its own id and gets a proposal; the "updated" events of the
+      # same alert stay throttled. Overlap is refused by propose.yml (one request in flight per datastore, the lock).
+      throttle:
+        once_within: 4 hours            # = dsgrow_throttle (playbooks/group_vars/all/dsgrow.yml); a literal by schema
+        group_by_attributes:
+          - event.payload.resource_id
+          - event.payload.alert_id
+      action:
+        run_playbook:
+          name: playbooks/propose.yml
+
+    - name: Alert cleared
+      condition: >
+        event.meta.source.name == "vcfops"
+        and event.payload.schema == "dsgrow.vcfops.v1"
+        and event.payload.event == "canceled"
+        and event.payload.resource_kind == "Datastore"
+        and event.payload.alert_definition in vars.dsgrow_alert_definitions
+      action:
+        run_playbook:
+          name: playbooks/cleared.yml
+
+    - name: Approved expansion
+      condition: >
+        event.meta.source.name == "approvals"
+        and event.payload.schema == "dsgrow.approval.v1"
+        and event.payload.decision == "approve"
+      action:
+        run_playbook:
+          name: playbooks/execute.yml
+
+    - name: Ignore and log everything else
+      condition: event.meta is defined
+      action:
+        debug:
+          msg: >-
+            dsgrow ignored an event from {{ event.meta.source.name }}
+            (schema {{ event.payload.schema | default('n/a') }})

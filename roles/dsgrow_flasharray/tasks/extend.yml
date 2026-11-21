@@ -1,0 +1,87 @@
+---
+# THE FlashArray write (execute.yml only, after the full preflight).
+# In: dsgrow_fa_match ({array, volume, space} from find), dsgrow_target_bytes (absolute, validated by preflight).
+# Out: dsgrow_fa_before_bytes, dsgrow_fa_after_bytes. Skipped when the volume is already at target (a rerun or a
+# retried approval). purefa_volume only grows (it ignores a smaller size, 1.46.0 line 1118) and honours --check.
+# `size` is the absolute byte count as digits (purefa human_to_bytes: digits are bytes), never a delta.
+# purefa_volume addresses the volume by NAME and, when no live volume has it, CREATES one (or recovers a destroyed
+# one; 1.46.0 main()). So the identity is read again on this array just before the write, and the serial the
+# module reports is checked right after it (review 2026-11-20). The window left is the module's own sub-second one.
+- name: The volume to extend
+  ansible.builtin.set_fact:
+    dsgrow_fa_array: "{{ dsgrow_fa_match.array }}"
+    dsgrow_fa_volume_name: "{{ dsgrow_fa_match.volume.name }}"
+    dsgrow_fa_before_bytes: "{{ dsgrow_fa_match.volume.provisioned | int }}"
+
+- name: Grow only (rule 1)
+  ansible.builtin.assert:
+    that:
+      - dsgrow_target_bytes | int > 0
+      - dsgrow_fa_before_bytes | int <= dsgrow_target_bytes | int
+    fail_msg: >-
+      volume {{ dsgrow_fa_volume_name }} is {{ dsgrow_fa_before_bytes | dsgrow_human_bytes }}, above the target
+      {{ dsgrow_target_bytes | dsgrow_human_bytes }}: nothing to grow, refusing
+    quiet: true
+
+- name: "{{ dsgrow_fa_array.name }}: token"
+  ansible.builtin.include_tasks: token.yml
+
+- name: "{{ dsgrow_fa_array.name }}: the volume right before the write"
+  everpure.flasharray.purefa_info:
+    fa_url: "{{ dsgrow_fa_array.url | regex_replace('^https?://', '') }}"
+    api_token: "{{ dsgrow_fa_token }}"
+    gather_subset: [volumes]
+  register: dsgrow_fa_now
+  check_mode: false
+  when: dsgrow_fa_before_bytes | int < dsgrow_target_bytes | int
+
+- name: "{{ dsgrow_fa_array.name }}: still the same live volume, same size (no create, no recover)"
+  ansible.builtin.assert:
+    that:
+      - dsgrow_fa_now_vol.serial | default('') | upper == dsgrow_fa_serial
+      - dsgrow_fa_now_vol.size | default(-1) | int == dsgrow_fa_before_bytes | int
+    fail_msg: >-
+      {{ dsgrow_fa_volume_name }} on {{ dsgrow_fa_array.name }} changed since the preflight
+      ({{ 'gone' if not dsgrow_fa_now_vol else 'serial ' ~ dsgrow_fa_now_vol.serial ~ ', ' ~ dsgrow_fa_now_vol.size ~ ' bytes' }};
+      expected serial {{ dsgrow_fa_serial }}, {{ dsgrow_fa_before_bytes }} bytes): nothing written
+    quiet: true
+  vars:
+    dsgrow_fa_now_vol: "{{ dsgrow_fa_now.purefa_info.volumes.get(dsgrow_fa_volume_name, {}) }}"
+  when: dsgrow_fa_before_bytes | int < dsgrow_target_bytes | int
+
+- name: "{{ dsgrow_fa_array.name }}: extend {{ dsgrow_fa_volume_name }} to {{ dsgrow_target_bytes | dsgrow_human_bytes }}"
+  everpure.flasharray.purefa_volume:
+    fa_url: "{{ dsgrow_fa_array.url | regex_replace('^https?://', '') }}"
+    api_token: "{{ dsgrow_fa_token }}"
+    name: "{{ dsgrow_fa_volume_name }}"
+    size: "{{ dsgrow_target_bytes | int | string }}"
+  register: dsgrow_fa_extend
+  when: dsgrow_fa_before_bytes | int < dsgrow_target_bytes | int
+
+- name: "{{ dsgrow_fa_array.name }}: the module grew that volume (serial checked, live)"
+  ansible.builtin.assert:
+    that:
+      - dsgrow_fa_extend.volume[dsgrow_fa_volume_name].serial | default('') | upper == dsgrow_fa_serial
+      - not (dsgrow_fa_extend.volume[dsgrow_fa_volume_name].destroyed | default(false))
+    fail_msg: >-
+      purefa_volume did not act on volume {{ dsgrow_fa_serial }} ({{ dsgrow_fa_extend.volume | default({}) }}):
+      something under the name {{ dsgrow_fa_volume_name }} was created or recovered - check the array by hand;
+      no vSphere step was run
+    quiet: true
+  when: dsgrow_fa_extend is not skipped and not ansible_check_mode
+
+# The module describes the volume after its change (_volfact); without a change the preflight's fresh read holds.
+- name: Size after
+  ansible.builtin.set_fact:
+    dsgrow_fa_after_bytes: >-
+      {{ (dsgrow_fa_extend.volume[dsgrow_fa_volume_name].size | int)
+         if (dsgrow_fa_extend is not skipped and not ansible_check_mode) else dsgrow_fa_before_bytes | int }}
+
+- name: The volume is exactly the target
+  ansible.builtin.assert:
+    that: dsgrow_fa_after_bytes | int == dsgrow_target_bytes | int
+    fail_msg: >-
+      {{ dsgrow_fa_volume_name }} on {{ dsgrow_fa_array.name }} is {{ dsgrow_fa_after_bytes | int }} bytes after the
+      extend, expected {{ dsgrow_target_bytes | int }}; no vSphere step was run
+    quiet: true
+  when: not ansible_check_mode

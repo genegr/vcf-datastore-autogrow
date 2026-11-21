@@ -1,0 +1,58 @@
+---
+# READ-ONLY probe: every VCF Operations object whose name starts with "dsgrow" (symptoms, alert definitions, outbound
+# instances, payload templates, notification rules), with ids and names exactly as the API returns them.
+#   bash tools/probe.sh tests/probes/ops_dsgrow_objects.yml
+- name: The dsgrow objects in VCF Operations
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pr_api: https://ops.vcf9-1.lab/suite-api/api
+  vars_files:
+    - /nvcf/labs/vcf9-1.vault.yml
+  tasks:
+    - name: Token for the local admin
+      ansible.builtin.uri:
+        url: "{{ pr_api }}/auth/token/acquire"
+        method: POST
+        body_format: json
+        body: {username: admin, password: "{{ vault_vcf_password }}", authSource: local}
+        headers: {Accept: application/json}
+        validate_certs: false
+      register: pr_tok
+      no_log: true
+
+    - name: Read, then always release
+      block:
+        - name: Lists
+          ansible.builtin.uri:
+            url: "{{ pr_api }}{{ item }}"
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            return_content: true
+          loop:
+            - /symptomdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000
+            - /alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000
+            - /alertplugins
+            - /notifications/templates
+            - /notifications/rules
+          register: pr_lists
+          no_log: true
+      always:
+        - name: Release the token
+          ansible.builtin.uri:
+            url: "{{ pr_api }}/auth/token/release"
+            method: POST
+            headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
+            validate_certs: false
+            status_code: [200, 204]
+          when: pr_tok.json.token is defined
+          no_log: true
+
+    - name: The dsgrow objects (names as returned)
+      ansible.builtin.debug:
+        msg:
+          symptoms: "{{ pr_lists.results[0].json.symptomDefinitions | selectattr('name', 'search', '^dsgrow') | map('community.general.json_query', '{id: id, name: name, key: state.condition.key}') | list }}"
+          alerts: "{{ pr_lists.results[1].json.alertDefinitions | selectattr('name', 'search', '^dsgrow') | map('community.general.json_query', '{id: id, name: name}') | list }}"
+          plugins: "{{ pr_lists.results[2].json.notificationPluginInstances | selectattr('name', 'search', '^dsgrow') | map('community.general.json_query', '{id: pluginId, name: name, enabled: enabled}') | list }}"
+          templates: "{{ pr_lists.results[3].json.notificationTemplates | selectattr('name', 'search', '^dsgrow') | map('community.general.json_query', '{id: templateId, name: name}') | list }}"
+          rules: "{{ pr_lists.results[4].json.rules | selectattr('name', 'search', '^dsgrow') | map('community.general.json_query', '{id: id, name: name}') | list }}"

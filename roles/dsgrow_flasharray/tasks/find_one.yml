@@ -1,0 +1,35 @@
+---
+# In: dsgrow_fa_array, dsgrow_fa_serial. Appends {array, volume, space} for every live volume with that serial.
+# purefa_info volumes lists live volumes only (destroyed=False); a pod volume is named <pod>::<volume>.
+- name: "{{ dsgrow_fa_array.name }}: token"
+  ansible.builtin.include_tasks: token.yml
+
+- name: "{{ dsgrow_fa_array.name }}: volumes and capacity (read-only)"
+  everpure.flasharray.purefa_info:
+    fa_url: "{{ dsgrow_fa_array.url | regex_replace('^https?://', '') }}"
+    api_token: "{{ dsgrow_fa_token }}"
+    gather_subset: [volumes, capacity]
+  register: dsgrow_fa_info
+  check_mode: false
+
+- name: "{{ dsgrow_fa_array.name }}: record matches"
+  ansible.builtin.set_fact:
+    dsgrow_fa_matches: "{{ dsgrow_fa_matches + dsgrow_fa_found }}"
+  vars:
+    dsgrow_fa_cap: "{{ dsgrow_fa_info.purefa_info.capacity }}"
+    # Physical used: total_used where the array reports it, else capacity minus free_space (= total_physical)
+    dsgrow_fa_space:
+      capacity_bytes: "{{ dsgrow_fa_cap.total_capacity | int }}"
+      used_bytes: >-
+        {{ dsgrow_fa_cap.total_used | int if dsgrow_fa_cap.total_used is not none
+           else (dsgrow_fa_cap.total_capacity | int) - (dsgrow_fa_cap.free_space | int) }}
+    dsgrow_fa_found: >-
+      {% set out = [] %}
+      {%- for name, v in dsgrow_fa_info.purefa_info.volumes.items() %}
+      {%- if (v.serial | default('') | upper) == dsgrow_fa_serial %}
+      {%- set _ = out.append({'array': dsgrow_fa_array, 'space': dsgrow_fa_space,
+                              'volume': {'name': name, 'provisioned': v.size | int, 'serial': v.serial | upper,
+                                         'destroyed': false,
+                                         'pod': {'name': name.split('::')[0] if '::' in name else none},
+                                         'hosts': v.hosts | default([]), 'host_groups': v.host_groups | default([])}}) %}
+      {%- endif %}{% endfor %}{{ out }}

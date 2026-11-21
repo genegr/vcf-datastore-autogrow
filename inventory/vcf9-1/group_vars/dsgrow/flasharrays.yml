@@ -1,0 +1,22 @@
+---
+# Every array a datastore's volume may live on (nested-vcf sites/cto.yaml). A serial must match on exactly one.
+#   name  the array's own Purity name (owner 2026-11-20: shown everywhere: Slack, logs, records, the demo)
+#   key   the stable internal id, the alias nested-vcf uses for the array: dsgrow's vault variable
+#         dsgrow_secret_fa_token_<key>, the secret file fa-<key>.yml and nested-vcf's vault_array_tokens[<key>] are
+#         named by it, so renaming `name` touches no secret and no container
+# api_version: the REST 2.x version used; the lab arrays top out at 2.59 (nested-vcf skill flasharray-nvme),
+# confirmed by tests/probes/eui_serial.yml. The token is the dsgrow API user's (setup/fa_user.yml), from the vault or
+# the environment variable named by token_env. Names read back by tests/probes/fa_identity.yml (2026-11-20).
+dsgrow_flasharrays:
+  - name: z-fastaines-d          # FA-X50R3, Purity 6.12.4
+    key: z-x90-a
+    url: "{{ dsgrow_site.fa_url['z-x90-a'] }}"     # site.yml (not in git)
+    api_version: "2.59"
+    token_env: DSGROW_FA_TOKEN_Z_X90_A
+    validate_certs: false
+  - name: z-fastaines-f          # FA-X70R3, Purity 6.12.4
+    key: z-x70-a
+    url: "{{ dsgrow_site.fa_url['z-x70-a'] }}"     # site.yml (not in git)
+    api_version: "2.59"
+    token_env: DSGROW_FA_TOKEN_Z_X70_A
+    validate_certs: false

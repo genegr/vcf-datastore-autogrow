@@ -1,0 +1,166 @@
+---
+# One-time (LAB CHANGE, gated): the demo guest's template, Ubuntu 26.04 cloud image, on the domain's main datastore
+# (inventory dsgrow_demo: template, template_datastore, folder). The demo (demo/init.yml) clones it; nothing removes it.
+# Built as nested-vcf roles/lab_guest builds its guests (measured there 2026-11-02/10): the OVA's descriptor without
+# its vApp ProductSection and ovf:transport="iso" (the vApp would claim the CD-ROM that carries the cloud-init seed),
+# "VM Network" mapped to the demo port group, thin, never powered on, then marked as a template.
+# Create-only: an existing VM or template under that name is checked, never replaced. Rerun: changed=0.
+# Rollback (by hand): delete the template in vCenter.
+#   bash tools/setup.sh setup/template.yml [--confirm template.yml]
+- name: Demo guest template
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  module_defaults:
+    group/community.vmware.vmware:
+      hostname: "{{ dd_vc.hostname }}"
+      username: "{{ dd_admin }}"
+      password: "{{ vault_sso_admin_password }}"
+      validate_certs: false
+  tasks:
+    - name: Local directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop: ["{{ dd_dir }}", "{{ dd_dir }}/ova"]
+      check_mode: false
+
+    - name: The OVA (nested-vcf downloads, read-only)
+      ansible.builtin.stat:
+        path: "{{ dd_ova }}"
+        checksum_algorithm: sha256
+      register: tp_ova
+
+    - name: The OVA is the pinned image
+      ansible.builtin.assert:
+        that:
+          - tp_ova.stat.exists
+          - tp_ova.stat.checksum == dd.ova_sha256
+        fail_msg: "{{ dd_ova }}: {{ 'missing' if not tp_ova.stat.exists else 'sha256 ' ~ tp_ova.stat.checksum ~ ', want ' ~ dd.ova_sha256 }}"
+        quiet: true
+
+    - name: Unpack the OVA (once)
+      ansible.builtin.unarchive:
+        src: "{{ dd_ova }}"
+        dest: "{{ dd_dir }}/ova"
+        remote_src: true
+        creates: "{{ dd_dir }}/ova/guest.ovf"
+      check_mode: false
+
+    - name: The OVA's own descriptor
+      ansible.builtin.find:
+        paths: "{{ dd_dir }}/ova"
+        patterns: ["*.ovf"]
+        excludes: [guest.ovf]
+      register: tp_ovf_found
+
+    - name: Exactly one descriptor in the OVA
+      ansible.builtin.assert:
+        that: tp_ovf_found.files | length == 1
+        fail_msg: "expected one .ovf in {{ dd.ova_file }}, found {{ tp_ovf_found.files | map(attribute='path') | list }}"
+        quiet: true
+
+    - name: The descriptor without vApp properties and transport
+      ansible.builtin.set_fact:
+        tp_ovf: >-
+          {{ lookup('ansible.builtin.file', tp_ovf_found.files[0].path)
+             | regex_replace(product_section, '') | replace(' ovf:transport="iso"', '') }}
+      vars:
+        product_section: '(?s)\s*<ProductSection.*?</ProductSection>'
+
+    - name: The derived descriptor has no vApp left and still its one network
+      ansible.builtin.assert:
+        that:
+          - "'ProductSection' not in tp_ovf"
+          - "'transport' not in tp_ovf"
+          - "'<VirtualSystem ' in tp_ovf"
+          - "'<Network ovf:name=\"VM Network\"' in tp_ovf"
+        fail_msg: "the derived descriptor still carries vApp settings, lost its VirtualSystem, or has no 'VM Network'"
+        quiet: true
+
+    - name: Write the derived descriptor
+      ansible.builtin.copy:
+        content: "{{ tp_ovf }}\n"
+        dest: "{{ dd_dir }}/ova/guest.ovf"
+        mode: "0600"
+      check_mode: false
+
+    - name: The template now
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.template }}"
+      register: tp_now
+      check_mode: false
+      failed_when: tp_now.instance is not defined and (tp_now.msg | default('')) is not search('non-existing VM')
+
+    - name: An existing object under that name is our template (never replaced)
+      ansible.builtin.assert:
+        that:
+          - tp_now.instance.hw_is_template | bool
+          - tp_now.instance.hw_folder == dd_folder
+          - tp_now.instance.hw_datastores == [dd.template_datastore]
+        fail_msg: >-
+          {{ dd.template }} exists but is not the demo template (template {{ tp_now.instance.hw_is_template }},
+          folder {{ tp_now.instance.hw_folder }}, datastores {{ tp_now.instance.hw_datastores }}): fix it by hand
+        quiet: true
+      when: tp_now.instance is defined
+
+    - name: The folder {{ dd_folder }}
+      community.vmware.vcenter_folder:
+        datacenter: "{{ dd_vc.datacenter }}"
+        folder_name: "{{ dd.folder }}"
+        folder_type: vm
+        state: present
+
+    - name: Deploy and mark as template
+      when: tp_now.instance is not defined
+      block:
+        - name: Deploy {{ dd.template }} from the derived descriptor (powered off)
+          community.vmware.vmware_deploy_ovf:
+            datacenter: "{{ dd_vc.datacenter }}"
+            cluster: "{{ dd.cluster }}"
+            folder: "{{ dd_folder }}"
+            datastore: "{{ dd.template_datastore }}"
+            name: "{{ dd.template }}"
+            ovf: "{{ dd_dir }}/ova/guest.ovf"
+            networks: {"VM Network": "{{ dd.portgroup }}"}
+            disk_provisioning: thin
+            allow_duplicates: false
+            power_on: false
+            wait: false
+          when: not ansible_check_mode
+
+        # vmware_guest on an existing template WITHOUT is_template: true turns it back into a VM (6.3.0 source):
+        # every later call on the template name must pass is_template: true.
+        - name: Mark {{ dd.template }} as a template
+          community.vmware.vmware_guest:
+            datacenter: "{{ dd_vc.datacenter }}"
+            folder: "{{ dd_folder }}"
+            name: "{{ dd.template }}"
+            is_template: true
+            state: present
+          when: not ansible_check_mode
+
+    - name: Read back
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ dd_vc.datacenter }}"
+        name: "{{ dd.template }}"
+      register: tp_after
+      when: not ansible_check_mode
+
+    - name: The template is in place
+      ansible.builtin.assert:
+        that:
+          - tp_after.instance.hw_is_template | bool
+          - tp_after.instance.hw_datastores == [dd.template_datastore]
+          - tp_after.instance.hw_power_status == 'poweredOff'
+        success_msg: "{{ dd.template }}: template in {{ tp_after.instance.hw_folder }} on {{ tp_after.instance.hw_datastores }}"
+        fail_msg: "{{ tp_after.instance | to_json }}"
+      when: not ansible_check_mode

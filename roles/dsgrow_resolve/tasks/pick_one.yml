@@ -1,0 +1,8 @@
+---
+- name: Backing in {{ dsgrow_vc.hostname }}
+  ansible.builtin.include_tasks: backing.yml
+
+- name: Record {{ dsgrow_vc.hostname }}
+  ansible.builtin.set_fact:
+    dsgrow_vc_found: "{{ dsgrow_vc_found + [dsgrow_vc_try] }}"
+  when: dsgrow_backing_matches | int > 0

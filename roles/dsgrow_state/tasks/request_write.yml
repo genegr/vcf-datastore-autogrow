@@ -1,0 +1,13 @@
+---
+# In: dsgrow_request (dict with rid), dsgrow_request_update (dict merged on top, default {}). Out: dsgrow_request.
+- name: Merge the update
+  ansible.builtin.set_fact:
+    dsgrow_request: >-
+      {{ dsgrow_request | combine(dsgrow_request_update | default({}), recursive=true)
+         | combine({'updated_at': now(utc=true).isoformat()}) }}
+
+- name: Write request {{ dsgrow_request.rid }} ({{ dsgrow_request.status }})
+  ansible.builtin.copy:
+    content: "{{ dsgrow_request | to_nice_json(indent=2) }}\n"
+    dest: "{{ dsgrow_state_dir }}/requests/{{ dsgrow_request.rid }}.json"
+    mode: "0600"

@@ -1,0 +1,7 @@
+---
+# In: dsgrow_vc.hostname, dsgrow_datastore_name, dsgrow_lock_new ({rid, status, expires}).
+- name: Write the lock of {{ dsgrow_datastore_name }} ({{ dsgrow_lock_new.status }})
+  ansible.builtin.copy:
+    content: "{{ dsgrow_lock_new | combine({'updated_at': now(utc=true).isoformat()}) | to_nice_json(indent=2) }}\n"
+    dest: "{{ dsgrow_state_dir }}/locks/{{ dsgrow_vc.hostname | dsgrow_lock_name(dsgrow_datastore_name) }}.json"
+    mode: "0600"

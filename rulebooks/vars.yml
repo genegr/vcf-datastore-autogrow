@@ -1,0 +1,5 @@
+---
+# Rulebook variables (ansible-rulebook --vars). Keep dsgrow_alert_definitions equal to the playbooks' list in
+# playbooks/group_vars/all/dsgrow.yml (tests/unit/test_repo_consistency.py checks it).
+dsgrow_alert_definitions:
+  - "dsgrow - datastore capacity"

@@ -1,0 +1,39 @@
+---
+# READ-ONLY: run init's VCF Ops wait (demo/tasks/vcfops_wait.yml) against the demo datastore as vCenter has it now:
+# its moref + vCenter instance UUID (dsgrow_datastore_backing) -> the one VCF Ops resource with those identifiers.
+#   bash tools/probe.sh tests/probes/demo_vcfops_wait.yml
+- name: Demo - VCF Ops knows the datastore
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/vcenters.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/flasharrays.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/eda.yml
+    - /work/inventory/vcf9-1/group_vars/dsgrow/demo.yml
+    - /work/demo/vars/demo.yml
+    - /nvcf/labs/vcf9-1.vault.yml
+  tasks:
+    - name: The demo datastore in vCenter
+      dsgrow_datastore_backing:
+        hostname: "{{ dd_vc.hostname }}"
+        username: "{{ dd_admin }}"
+        password: "{{ vault_sso_admin_password }}"
+        validate_certs: false
+        datacenter: "{{ dd_vc.datacenter }}"
+        datastore: "{{ dd.datastore }}"
+      register: pw_ds
+
+    - name: Found once
+      ansible.builtin.assert:
+        that: pw_ds.matches == 1
+        fail_msg: "{{ pw_ds.matches }} datastores named {{ dd.datastore }}"
+        success_msg: "{{ dd.datastore }}: {{ pw_ds.datastore.moid }} in vCenter {{ pw_ds.datastore.vcenter_uuid }}, {{ pw_ds.datastore.extents }}"
+        quiet: false
+
+    - name: The wait
+      ansible.builtin.include_tasks: /work/demo/tasks/vcfops_wait.yml
+      vars:
+        dv_moid: "{{ pw_ds.datastore.moid }}"
+        dv_vcenter_uuid: "{{ pw_ds.datastore.vcenter_uuid }}"

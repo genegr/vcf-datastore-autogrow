@@ -1,0 +1,10 @@
+---
+# Where VCF Operations sends the alerts: the rulebook's vcfops source on the run host (host network). The lab reaches
+# it through the router's NAT (nested-vcf masquerades the lab networks out of eth0). Port 5000 is another project's.
+dsgrow_eda_host: "{{ dsgrow_site.run_host }}"       # site.yml (not in git)
+dsgrow_eda_vcfops_port: 5080
+dsgrow_vcfops_url: https://ops.vcf9-1.lab/suite-api
+# setup/vcfops_interval.yml: the demo domain's vCenter adapter collects every minute instead of 5, so the alert comes
+# within about a minute of the datastore crossing 80 % (owner 2026-11-20). Rollback: -e dsgrow_vcfops_interval_min=5
+dsgrow_vcfops_interval_adapter: vcenter-w02.vcf9-1.lab
+dsgrow_vcfops_interval_min: 1

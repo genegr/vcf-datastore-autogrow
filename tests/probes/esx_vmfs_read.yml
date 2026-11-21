@@ -1,0 +1,63 @@
+---
+# READ-ONLY probe: why QueryVmfsDatastoreExpandOptions answers vim.fault.NotFound for w01's datastores (esx04) but
+# works for w02's (esx07), 2026-11-19 (tests/probes/backing_read.yml). Compares the two hosts with read-only esxcli /
+# partedUtil / vmkfstools queries over SSH (nested-vcf's lab key, through the lab router, as nested-vcf esx_wait does).
+#   bash tools/probe.sh tests/probes/esx_vmfs_read.yml
+- name: Hosts
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/inventory/vcf9-1/group_vars/dsgrow/site.yml
+  vars:
+    nvcf: /nvcf
+    pr_ldir: "{{ nvcf }}/.state/labs/vcf9-1"
+    pr_hosts:
+      - {name: esx04, ip: "{{ dsgrow_site.esx_ip.esx04 }}", ds: vcf9-1-w01-ds01, dev: eui.006c1b16ce1c034d24a9371c0647bcc9}
+      - {name: esx05, ip: "{{ dsgrow_site.esx_ip.esx05 }}", ds: vcf9-1-w01-ds01, dev: eui.006c1b16ce1c034d24a9371c0647bcc9}
+      - {name: esx06, ip: "{{ dsgrow_site.esx_ip.esx06 }}", ds: vcf9-1-w01-ds01, dev: eui.006c1b16ce1c034d24a9371c0647bcc9}
+      - {name: esx07, ip: "{{ dsgrow_site.esx_ip.esx07 }}", ds: vcf9-1-w02-ds01, dev: eui.00274318935cf84e24a9372b02d1c54b}
+  tasks:
+    - name: Inventory
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: [pr_esx]
+        ansible_host: "{{ item.ip }}"
+        ansible_connection: ssh        # tools/probe.sh passes -c local for localhost
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ pr_ldir }}/ssh/esx_ecdsa"
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{ pr_ldir }}/ssh/router_ed25519 -o BatchMode=yes -o UserKnownHostsFile=/dev/null
+          -o StrictHostKeyChecking=no -o LogLevel=ERROR -W %h:%p vyos@{{ dsgrow_site.router }}"
+        pr_ds: "{{ item.ds }}"
+        pr_dev: "{{ item.dev }}"
+      loop: "{{ pr_hosts }}"
+      changed_when: false
+
+- name: Read
+  hosts: pr_esx
+  gather_facts: false
+  tasks:
+    - name: Read-only queries
+      ansible.builtin.raw: "{{ item }} 2>&1; echo rc=$?"
+      loop:
+        - esxcli storage core device detached list
+        - esxcli storage core device list -d eui.006c1b16ce1c034d24a9371c06495c13
+        - vmware -vl
+        - esxcli storage filesystem list
+        - ls -la /vmfs/volumes/
+        - uptime
+        - esxcli storage vmfs extent list
+        - esxcli storage core device list -d {{ pr_dev }}
+        - partedUtil getptbl /vmfs/devices/disks/{{ pr_dev }}
+        - partedUtil getUsableSectors /vmfs/devices/disks/{{ pr_dev }}
+        - vmkfstools -Ph /vmfs/volumes/{{ pr_ds }}
+        - ls -la /vmfs/devices/disks/ | grep -i {{ pr_dev }}
+        - esxcli storage core path list -d {{ pr_dev }} | grep -E "Runtime Name|State|Transport"
+      register: pr_out
+      changed_when: false
+      failed_when: false
+
+    - name: Output
+      ansible.builtin.debug:
+        msg: "{{ pr_out.results | map(attribute='item') | zip(pr_out.results | map(attribute='stdout_lines') | map('default', []), pr_out.results | map(attribute='stderr', default='')) | list }}"
