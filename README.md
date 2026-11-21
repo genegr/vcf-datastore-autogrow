@@ -1,6 +1,8 @@
-# dsgrow: human-approved VMFS datastore expansion
+# vcf-datastore-autogrow
 
-When a VMFS datastore runs out of space, dsgrow proposes how much to grow it, asks an admin in Slack, and does the
+Human-approved growth of VMFS datastores on Everpure FlashArray, triggered by VCF Operations.
+
+When a VMFS datastore runs out of space, it proposes how much to grow it, asks an admin in Slack, and does the
 whole expansion once the admin picks a size: it grows the Everpure FlashArray volume behind the datastore, rescans
 the ESXi hosts, expands the VMFS and reports back in the same Slack thread.
 
@@ -9,6 +11,10 @@ the ESXi hosts, expands the VMFS and reports back in the same Slack thread.
 - **Action:** ansible-rulebook + Ansible playbooks. Grow only; a request that breaks a cap is refused, never clamped.
 
 It does one thing: grow a datastore. Shrinking, creating, deleting and migrating datastores are out of scope.
+"Auto" means the work after the decision: nothing grows without an approver's click.
+
+Inside the code the project is called `dsgrow`: the variable and role prefix, the event schemas
+(`dsgrow.vcfops.v1`, `dsgrow.approval.v1`), the containers and the names of the objects it creates.
 
 ## How it works
 

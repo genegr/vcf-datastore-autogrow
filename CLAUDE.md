@@ -1,4 +1,4 @@
-# dsgrow: human-approved VMFS datastore expansion
+# vcf-datastore-autogrow (internal name dsgrow): human-approved VMFS datastore expansion
 
 When VCF Operations raises a capacity alert for a VMFS datastore backed by an Everpure FlashArray volume,
 ansible-rulebook proposes sizes in Slack; an authorised admin clicks one; the rulebook runs `execute.yml`, which grows
