@@ -162,8 +162,30 @@ What the environment must provide. The reference lab (environment `vcf9-1`, VCF 
   and the expansion completes in under a minute.
 - `demo/cleanup.yml`: removes everything init created, each object checked against the recorded identity.
 
-Run with `bash tools/setup.sh demo/<x>.yml --confirm <x>.yml` on the run host; follow an expansion with
-`python3 tools/demo_follow.py`. The demo's objects and sizes are in `environments/<env>/inventory/group_vars/dsgrow/demo.yml`.
+The demo's objects and sizes are in `environments/<env>/inventory/group_vars/dsgrow/demo.yml`. It can be run in two
+ways.
+
+**Fully assisted.** Every step is a playbook, run on the run host:
+
+```bash
+bash tools/setup.sh demo/init.yml --confirm init.yml
+bash tools/setup.sh demo/start.yml --confirm start.yml
+python3 tools/demo_follow.py          # follows the proposal, the click and the expansion (read-only)
+bash tools/setup.sh demo/cleanup.yml --confirm cleanup.yml
+```
+
+**Start by hand in the vSphere Client.** Run init and cleanup as above, but fill the datastore yourself, which shows
+the audience that an ordinary vSphere operation triggers the flow:
+
+1. Edit the settings of the demo VM (`dsgrow-demo-vm`) and add a hard disk on the demo datastore (`dsgrow-demo01`),
+   **thick provision lazy zeroed** (a thin disk takes no space; eager zeroed takes minutes). About 166 GiB takes a
+   fresh 200 GiB demo datastore to 85 %; anything above about 157 GiB crosses the 80 % alert threshold.
+2. Right-click the datastore and choose *Refresh Capacity Information*. Without it vCenter's cached used space can
+   lag, and the alert comes minutes later.
+3. Follow it with `python3 tools/demo_follow.py --since <UTC time of the init>`, or just watch Slack.
+
+Keep the disk on the demo VM and on the demo datastore: cleanup refuses to remove a datastore that holds other VMs,
+or a VM with disks elsewhere. Cleanup removes the added disk together with the VM.
 
 ## Tests
 
