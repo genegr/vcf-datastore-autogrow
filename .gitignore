@@ -16,6 +16,3 @@ __pycache__/
 
 # The lab's addresses (public repo: template inventory/example/group_vars/dsgrow/site.yml.example)
 inventory/*/group_vars/dsgrow/site.yml
-
-# One-off investigation probes of another project (nested-vcf w01 repair), kept local
-tests/probes/w01_*

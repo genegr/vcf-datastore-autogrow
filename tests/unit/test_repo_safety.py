@@ -424,7 +424,7 @@ def test_no_private_addresses_committed():
         rel = path.relative_to(ROOT)
         if not path.is_file() or SKIP_DIRS & set(rel.parts) or path.name in NOT_IN_GIT:
             continue
-        if path.name.startswith("w01_") or path.name == ".sync.env":      # gitignored local files
+        if path.name in (".sync.env", ".env"):      # gitignored local files
             continue
         if path.suffix not in (".yml", ".yaml", ".md", ".py", ".sh", ".j2", ".json", ".cfg", ".txt", ""):
             continue
@@ -453,7 +453,7 @@ def test_code_is_environment_neutral():
         files += [p for p in (ROOT / d).rglob("*") if p.is_file()]
     for path in files:
         rel = path.relative_to(ROOT)
-        if SKIP_DIRS & set(rel.parts) or path.name.startswith("w01_") or path.suffix in (".pyc", ".patch"):
+        if SKIP_DIRS & set(rel.parts) or path.suffix in (".pyc", ".patch"):
             continue
         try:
             text = path.read_text(encoding="utf-8")

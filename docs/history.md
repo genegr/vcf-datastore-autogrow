@@ -612,3 +612,6 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   dry runs of demo/init (SSH NQN read through the jump host, attach decision unchanged), setup/template, vcfops,
   fa_user, vcfops_interval, vcenter_account; rendered guest SSH args; offline, rulebook test, lint clean. Run host:
   .env created (DSGROW_ENV=vcf9-1); the running rulebook container is unchanged (same inventory).
+- Owner: the tests/probes/w01_* files (19, gitignored, the nested-vcf w01 repair investigation) moved to the nested-vcf
+  checkout, tests/probes/w01/ (with a README), on the workstation and the run host, each machine's own copy; their
+  .gitignore entry and test exclusions removed.
