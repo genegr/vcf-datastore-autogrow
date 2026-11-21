@@ -1,6 +1,6 @@
 # vcf9-1: the reference lab
 
-A nested VCF 9.1.1 lab built and owned by the separate nested-vcf repo: two workload-domain vCenters (`w01`, `w02`),
+A VCF 9.1.1 lab built and owned by the separate nested-vcf repo: two workload-domain vCenters (`w01`, `w02`),
 ESXi hosts attached over NVMe/TCP to two FlashArrays (`z-fastaines-d`, `z-fastaines-f`), VCF Operations 9.1.1. The
 demo runs on the `w02` domain (esx07-09, host group `vcf9-1-w02`).
 

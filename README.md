@@ -100,7 +100,7 @@ environments/                      everything specific to one lab, nothing else 
 
 ## Prerequisites
 
-What the environment must provide. The reference lab (inventory `vcf9-1`, a nested VCF 9.1.1 lab) has all of it.
+What the environment must provide. The reference lab (environment `vcf9-1`, VCF 9.1.1) has all of it.
 
 **For the expansion**
 

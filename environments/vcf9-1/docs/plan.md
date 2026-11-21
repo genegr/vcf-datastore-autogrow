@@ -5,7 +5,7 @@
 > and the skills; the history of every change is in environments/vcf9-1/docs/history.md.
 
 ## Context
-The goal is a live demo on the nested VCF 9.1.1 lab (the nested-vcf repo, lab `vcf9-1`). When a VMFS datastore
+The goal is a live demo on the VCF 9.1.1 lab `vcf9-1` (built by the nested-vcf repo). When a VMFS datastore
 fills too fast, VCF Operations raises an alert. An ansible-rulebook then posts a sizing proposal to a Slack channel.
 An approver clicks a size, the rulebook runs the playbook that grows the Everpure FlashArray volume, and the VMFS
 datastore is expanded. The repo has only the design (CLAUDE.md and 6 skills), no code yet.
