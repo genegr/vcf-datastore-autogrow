@@ -744,3 +744,8 @@ steps, each with the owner's go-ahead ("go ahead with steps 1 and 2", "step 3", 
   datastore untouched (85.0 %, volume 200 GiB). Not exercised live: an approval arriving after a denial (a Custom form
   opened before it), covered offline. The demo is left initialized and filled to 85 %, the denied request holding the
   lock; "now clean up the environment" closes it.
+- Cleanup (owner: "now clean up the environment", `cleanup-20261123T233400Z.log`, 23:34 UTC, no dry run: unchanged since
+  the 23:05 run): ok=63 changed=11 failed=0, 1 min 55 s. It took the lock over from the denied request and released it.
+  Read-back: datastore and volume absent, both locks released, nothing in flight; the denied request is kept as the
+  record (cleanup closes only proposed, executing and failed requests: 12 done, 1 denied, 1 cleared). The lab is back to
+  its clean initial state.
