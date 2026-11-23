@@ -68,9 +68,12 @@ reachable from VCF Operations only.
 
 What a deployment still has to take care of, and what the code does about the rest:
 
-- **Event strings are templates.** Ansible renders the strings of an event when a playbook reads them, so every field of
-  an alert or an approval must match an anchored allow-list in the rulebook before a playbook starts
-  (`rulebooks/datastore_capacity.yml`); the bridge cleans the approver's name the same way.
+- **Event strings are templates.** Ansible renders the strings of an event when a playbook reads them, so every field a
+  playbook reads must pass an allow-list in the rulebook before the playbook starts (`rulebooks/datastore_capacity.yml`):
+  strict character sets for the identifiers that pick the datastore, and for the text shown in Slack only "no Jinja
+  opener". Fields nothing reads have no pattern, so an unexpected value there never drops an alert (they stay inert; a
+  test runs the real playbooks to prove it). A rejected alert is logged as `dsgrow REJECTED` with the values it saw. The
+  bridge cleans the approver's name the same way.
 - **The `vcfops` webhook is plain HTTP behind a bearer token.** Whoever has the token can post a forged alert (a real
   proposal with working buttons) or cancel a pending one. Firewall port 5080 to the VCF Operations nodes, set
   `DSGROW_EDA_VCFOPS_BIND` in the run host's own `.env` (not a synced file) to the address on their network, and prefer

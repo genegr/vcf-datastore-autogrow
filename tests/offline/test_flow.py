@@ -182,11 +182,11 @@ class Lab:
             cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=600)
 
     @staticmethod
-    def event(source, payload, uuid_=None):
+    def event(source, payload, uuid_=None, headers=None, endpoint="endpoint"):
         return {"payload": payload, "meta": {"source": {"name": source, "type": "ansible.eda.webhook"},
                                              "uuid": uuid_ or str(uuid.uuid4()),
                                              "received_at": "2026-11-23T10:00:00.000000Z",
-                                             "endpoint": "endpoint", "headers": {}}}
+                                             "endpoint": endpoint, "headers": headers or {}}}
 
     def propose(self, alert="new_datastore_80.json", **over):
         payload = json.loads((FIX / "vcfops" / alert).read_text(encoding="utf-8"))
@@ -539,6 +539,37 @@ def test_a_cancel_of_an_older_alert_leaves_the_newer_proposal_alone(lab):
     assert proc.returncode == 0, out(proc)
     assert lab.request_bytes(rid) == before and lab.lock_path().read_bytes() == lock_before
     assert not lab.slack.requests, "nothing is edited in Slack either"
+
+
+# ====================================================================== template text in an event: what is inert, what is not
+def _attack(lab):
+    sentinel = lab.tmp / "RENDERED"
+    return sentinel, "{{ lookup('ansible.builtin.pipe', 'touch %s') }}" % sentinel
+
+
+def test_template_text_in_fields_no_playbook_reads_is_inert(lab):
+    """The rulebook has no pattern for these (so they can never drop an alert): they must do nothing in the real playbooks.
+    Header, endpoint, sent_at and an extra key are in the same position."""
+    sentinel, attack = _attack(lab)
+    payload = json.loads((FIX / "vcfops" / "new_datastore_80.json").read_text(encoding="utf-8"))
+    payload.update(status=attack, adapter_kind=attack, create_time=attack, update_time=attack, symptoms=attack,
+                   sent_at=attack, extra_key=attack)
+    rid = str(uuid.uuid4())
+    proc = lab.run("propose.yml", lab.event("vcfops", payload, rid, headers={"User-Agent": attack, "X-Forwarded-For": attack},
+                                            endpoint=attack))
+    assert proc.returncode == 0, out(proc)
+    assert not sentinel.exists(), "template text in a field nobody reads was RENDERED: %s" % out(proc)
+    assert lab.request(rid)["status"] == "proposed"
+
+
+def test_the_playbooks_alone_are_not_a_guard_for_the_fields_they_read(lab):
+    """Positive control: the same text in a field the playbook reads IS rendered by ansible-core. That is why the rulebook
+    refuses such an event before any playbook starts (tests/rulebook, tests/unit/test_rulebook_allowlist.py)."""
+    sentinel, attack = _attack(lab)
+    payload = json.loads((FIX / "vcfops" / "new_datastore_80.json").read_text(encoding="utf-8"))
+    payload["resource_name"] = attack
+    lab.run("propose.yml", lab.event("vcfops", payload))
+    assert sentinel.exists(), "the control did not fire: the test above would prove nothing"
 
 
 # ====================================================================== the alert link cannot inject Slack markup

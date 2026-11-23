@@ -35,16 +35,23 @@ Pins: ansible-rulebook 1.3.2, `ansible.eda` 2.13.0 (`docker/`).
 - approved: `event.meta.source.name == "approvals"`, `schema == "dsgrow.approval.v1"`, `decision == "approve"`.
 - denied: the same source and schema, `decision == "deny"` (the bridge sends one for every Deny click: a deny must not live
   only in the bridge's memory, or a Custom form opened before it could still approve).
-- **Every field is on an allow-list.** ansible-core renders the strings of an event (they reach the playbook as extra
-  vars) as Jinja when a playbook reads them, so `{{ lookup('pipe', ...) }}` in a `resource_name` would run in the
-  container that holds every credential. Each playbook rule therefore carries an anchored `is match("^...$")` for every
-  payload field (and `meta.endpoint`, the sender's URL path); `adapter_instance` is optional
-  (`is not defined or is match`). Equality or `in` covers schema, event, kind and alert definition. A condition that
-  fails falls through to the catch-all, which only logs. Pattern rules: plain classes, no backslash, lookaround or
-  doubled brace (rulebook engine = Java matcher, `{{` in a string is rendered by ansible-rulebook itself); free-text
-  fields no playbook acts on only exclude braces and a leading `#`. The playbooks' own regexes run after the rendering
-  and guard nothing. A new payload field needs a pattern in every rule that reads the event, in the same change as the
-  fixture, template and bridge (`tests/unit/test_rulebook_allowlist.py` fails until it has one).
+- **Every field a playbook reads is on an allow-list.** ansible-core renders the strings of an event (they reach the
+  playbook as extra vars) as Jinja when a playbook reads them, so `{{ lookup('pipe', ...) }}` in a `resource_name` would run
+  in the container that holds every credential. Each playbook rule therefore carries an `is match("^...$")` for every
+  payload field the playbooks and roles READ (and `meta.endpoint`, the sender's URL path): strict character sets for the
+  identifiers (alert_id, resource_id, resource_name, adapter_instance, which is optional: `is not defined or is match`),
+  and for the text a playbook shows in Slack (criticality, cancel_time, link) a pattern that refuses only a Jinja opener
+  (`{{`, `{%`, `{#`) and a leading `#` (a `#jinja2:` header): a lone brace, an unresolved `${PLACEHOLDER}` or a link that is
+  not a URL is real data. Fields no playbook reads (status, adapter_kind, the times, symptoms), `sent_at`, an extra key and
+  `meta.headers` have NO pattern, so a value VCF Operations formats in an unexpected way can never drop an alert (the first
+  real alert on 2026-11-23 was dropped by a pattern that was too strict). They stay inert because nothing renders the event
+  as a whole (`test_no_playbook_renders_an_event_as_a_whole`; `tests/offline/test_flow.py` runs the real playbooks with
+  template text in each, with a positive control). The tests find the fields by reading the playbooks: one that starts
+  reading a new field fails `test_every_field_a_playbook_reads_from_an_alert_has_a_pattern` until the rulebook has a pattern.
+  An alert for our definition that fails a pattern falls through to the "Rejected alert" rule, which LOGS the values it saw
+  (`dsgrow REJECTED a vcfops event ...`): read that line first when a real alert produces no proposal. Pattern rules: plain
+  classes, no backslash, lookaround or doubled brace (rulebook engine = Java matcher; `{{` in a string is rendered by
+  ansible-rulebook itself). The playbooks' own regexes run after the rendering and guard nothing.
 - The bridge signs only what the approvals rule accepts: `approver_name` goes through `validate.clean_name`
   (`[A-Za-z0-9 ._()@-]`, 80 characters, anything else `_`).
 - A catch-all debug rule last (rules are first-match). An unmatched event is ignored, never an error.
@@ -64,13 +71,11 @@ Pins: ansible-rulebook 1.3.2, `ansible.eda` 2.13.0 (`docker/`).
 
 - The `vcfops` source never reaches `execute.yml` (CLAUDE.md rule 11).
 - Every new condition gets a fixture that matches and one that must not.
-- NOT covered by a pattern: `meta.headers` (the sender's request headers, minus Authorization), `payload.sent_at` and any
-  extra key of a payload. They reach the playbook in the event. ansible-core 2.21.4 (read in its `_lazy_containers.py`) renders a value of the event when that
-  item is read, but a whole-container operation (`to_json`, `str()`, `combine`, a loop over the values, `debug var=`)
-  renders every value in it. That is why EVERY known payload field has a pattern, and why no task may dump, print or loop
-  over `ansible_eda.event`, `.meta` or `.meta.headers` (nor `dsgrow_alert`, `dsgrow_approval`, `dsgrow_denial`) as a
-  whole: `tests/unit/test_security_settings.py::test_no_playbook_renders_an_event_as_a_whole` enforces it. Keep
-  ansible-core pinned (docker/requirements.txt).
+- `meta.headers`, `payload.sent_at` and an extra key reach the playbook in the event with no pattern. ansible-core 2.21.4 (read
+  in its `_lazy_containers.py`) renders a value of the event when that item is read, but a whole-container operation
+  (`to_json`, `str()`, `combine`, a loop over the values, `debug var=`) renders every value in it: no task may dump, print or
+  loop over `ansible_eda.event`, `.meta` or `.meta.headers` (nor `dsgrow_alert`, `dsgrow_approval`, `dsgrow_denial`) as a
+  whole. Keep ansible-core pinned (docker/requirements.txt).
 
 ## Test (offline, no real systems)
 
