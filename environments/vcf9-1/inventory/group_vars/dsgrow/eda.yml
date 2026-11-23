@@ -4,6 +4,9 @@
 dsgrow_eda_host: "{{ dsgrow_site.run_host }}"       # site.yml (not in git)
 dsgrow_eda_vcfops_port: 5080
 dsgrow_vcfops_url: https://ops.vcf9-1.lab/suite-api
+# The lab's VCF Operations has a self-signed certificate (the same as its vCenters and arrays, validate_certs: false in
+# vcenters.yml and flasharrays.yml): the setup steps, the demo and the ops_* probes do not verify it. Was hard-coded.
+dsgrow_vcfops_validate_certs: false
 # setup/vcfops_interval.yml: the demo domain's vCenter adapter collects every minute instead of 5, so the alert comes
 # within about a minute of the datastore crossing 80 % (owner 2026-11-20). Rollback: -e dsgrow_vcfops_interval_min=5
 dsgrow_vcfops_interval_adapter: vcenter-w02.vcf9-1.lab

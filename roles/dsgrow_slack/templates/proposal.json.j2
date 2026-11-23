@@ -58,7 +58,7 @@
 {%- endif -%}
 {%- set link = dsgrow_alert.link | default('') -%}
 {%- set _ = blocks.append({'type': 'context', 'elements': [{'type': 'mrkdwn', 'text':
-      ('<' ~ link ~ '|VCF Operations alert>' if link is match('^https?://') else 'VCF Operations alert')
+      ('<' ~ (link | dsgrow_slack_escape) ~ '|VCF Operations alert>' if link is match('^https?://[^<>| ]+$') else 'VCF Operations alert')
       ~ ': ' ~ (dsgrow_alert.alert_definition | default('') | dsgrow_slack_escape)
       ~ ' · ' ~ (dsgrow_alert.criticality | default('') | dsgrow_slack_escape)
       ~ ' · device ' ~ dsgrow_device

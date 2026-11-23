@@ -3,6 +3,9 @@
 #   name   the array's Purity name (shown in Slack and logs)
 #   key    stable id: names the secret (dsgrow_secret_fa_token_<key>), the env var and dsgrow_site.fa_url[<key>]
 #   api_version  a REST 2.x version the array supports
+#   (validate_certs also)  read by the read-only REST probes ONLY. The everpure.flasharray 1.46.0 modules, which
+#        make every runtime FlashArray call, cannot verify the array's certificate: that connection is NOT verified
+#        whatever this says (README "Security notes"). Keep the management network trusted.
 dsgrow_flasharrays:
   - name: array-a
     key: fa-a

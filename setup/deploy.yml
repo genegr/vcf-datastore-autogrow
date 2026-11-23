@@ -80,6 +80,14 @@
         label: "{{ item.name }}.env"
       no_log: true
 
+    # compose.yaml mounts ./state into the rulebook (the request files and locks): Docker creates a missing bind-mount
+    # source as root, which the service's own uid could not write. Created here, as that uid.
+    - name: The state directory the rulebook service writes
+      ansible.builtin.file:
+        path: /work/state
+        state: directory
+        mode: "0700"
+
     - name: Next
       ansible.builtin.debug:
         msg: >-

@@ -1,0 +1,16 @@
+---
+# Test stub for the rulebook test: records that the rulebook ran playbooks/deny.yml and with which event. No other
+# effect. The real playbook is playbooks/deny.yml at the repo root.
+- name: Record the call (deny)
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Append one line to the calls file
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('ansible.builtin.env', 'DSGROW_TEST_CALLS') }}"
+        line: >-
+          {{ {'playbook': 'deny', 'rule': ansible_eda.rule | default(''), 'source': ansible_eda.event.meta.source.name,
+              'schema': ansible_eda.event.payload.schema | default(''), 'uuid': ansible_eda.event.meta.uuid,
+              'resource_id': ansible_eda.event.payload.rid | default('')} | to_json }}
+        create: true
+        mode: "0600"

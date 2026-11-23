@@ -1,5 +1,10 @@
 ---
-# Rulebook variables (ansible-rulebook --vars). Keep dsgrow_alert_definitions equal to the playbooks' list in
-# playbooks/group_vars/all/dsgrow.yml (tests/unit/test_repo_consistency.py checks it).
+# Rulebook variables (ansible-rulebook --vars).
+
+# (The vcfops source's bind address is NOT here: this file is tracked and tools/sync.sh overwrites it. It is
+# DSGROW_EDA_VCFOPS_BIND in the run host's own .env, see .env.example. The approvals source is 127.0.0.1 by design.)
+
+# Keep dsgrow_alert_definitions equal to the playbooks' list in playbooks/group_vars/all/dsgrow.yml
+# (tests/unit/test_repo_safety.py::test_alert_definitions_in_sync checks it).
 dsgrow_alert_definitions:
   - "dsgrow - datastore capacity"

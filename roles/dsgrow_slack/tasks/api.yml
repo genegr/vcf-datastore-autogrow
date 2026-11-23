@@ -15,6 +15,17 @@
   check_mode: false
   failed_when: false
   no_log: true
+  # Transient answers are tried again (a rate limit, a 5xx, a timeout or a refused connection: status -1); any other
+  # answer, ok or not, is final. A repeated postMessage whose first answer was lost may post twice: harmless. When the
+  # retries run out Ansible fails the task and no_log shows only "censored": the explanation of a final (non-transient)
+  # answer comes from the assert below, a transient outage is simply that.
+  until: >-
+    (dsgrow_slack_call.status | default(-1)) == 200
+    and (dsgrow_slack_call.json.ok | default(false)
+         or (dsgrow_slack_call.json.error | default('')) not in ['ratelimited', 'internal_error', 'service_unavailable',
+                                                                  'fatal_error', 'request_timeout'])
+  retries: 3
+  delay: 2
   when: not ansible_check_mode or dsgrow_slack_in_check | default(false)
 
 - name: Slack {{ dsgrow_slack_method }} succeeded

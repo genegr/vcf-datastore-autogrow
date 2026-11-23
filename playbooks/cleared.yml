@@ -42,6 +42,20 @@
           vars:
             dsgrow_rid: "{{ dsgrow_lock.rid }}"
 
+        # The lock names the datastore's request, not the alert: a cancel of an OLDER alert must not withdraw the
+        # proposal a newer crossing of the limit made (every crossing is a new alert with its own id).
+        - name: Another alert's request
+          ansible.builtin.debug:
+            msg: >-
+              alert {{ dsgrow_alert.alert_id | default('?') }} was cleared, but {{ dsgrow_datastore_name }}'s request
+              {{ dsgrow_request.rid }} belongs to alert {{ (dsgrow_request.alert | default({})).alert_id | default('?') }}:
+              nothing to update
+          when: (dsgrow_request.alert | default({})).alert_id | default('') != dsgrow_alert.alert_id | default('')
+
+        - name: Stop, the request is another alert's
+          ansible.builtin.meta: end_host
+          when: (dsgrow_request.alert | default({})).alert_id | default('') != dsgrow_alert.alert_id | default('')
+
         # Decide once: a block's `when` is re-evaluated for every task in it, and "Mark the request cleared" changes
         # dsgrow_request.status, which skipped the write and the lock release (measured 2026-11-20).
         - name: The request's status when the alert cleared

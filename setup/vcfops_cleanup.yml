@@ -24,7 +24,7 @@
         body_format: json
         body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
       register: vc_tok
       check_mode: false
       no_log: true
@@ -35,7 +35,7 @@
           ansible.builtin.uri:
             url: "{{ vc_api }}/{{ item }}?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
             headers: {Authorization: "OpsToken {{ vc_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           loop: [symptomdefinitions, alertdefinitions]
           register: vc_read
           check_mode: false
@@ -60,7 +60,7 @@
             url: "{{ vc_api }}/symptomdefinitions/{{ item | urlencode }}"   # DELETE /api/symptomdefinitions/{id} (appliance REST docs)
             method: DELETE
             headers: {Authorization: "OpsToken {{ vc_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 204]
           loop: "{{ vc_doomed }}"
           changed_when: true
@@ -73,7 +73,7 @@
             url: "{{ vc_api }}/auth/token/release"
             method: POST
             headers: {Authorization: "OpsToken {{ vc_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 204]
           check_mode: false
           when: vc_tok.json.token is defined

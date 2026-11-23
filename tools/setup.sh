@@ -8,7 +8,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 pb=${1:?usage: tools/setup.sh setup/<step>.yml|demo/<step>.yml [--confirm <file name>] [ansible-playbook args]}; shift
-case "$pb" in setup/*.yml|demo/*.yml) ;; *) echo "only setup/*.yml or demo/*.yml" >&2; exit 2 ;; esac
+[[ $pb =~ ^(setup|demo)/[A-Za-z0-9_][A-Za-z0-9_.-]*\.yml$ ]] || { echo "only setup/<name>.yml or demo/<name>.yml" >&2; exit 2; }
+[[ -f $pb && ! -L $pb ]] || { echo "no such playbook (or a symlink): $pb" >&2; exit 2; }
 confirmed=no; args=()
 while [[ $# -gt 0 ]]; do
   if [[ $1 == --confirm ]]; then
@@ -16,9 +17,10 @@ while [[ $# -gt 0 ]]; do
     confirmed=yes; shift 2
   else args+=("$1"); shift; fi
 done
+source tools/env.sh
+dsgrow_check_args ${args[@]+"${args[@]}"} || exit 2   # before --check is added: nothing can name another playbook
 [[ $confirmed == yes ]] || args+=(--check --diff)
 [[ -s .state/vault-pass ]] || { echo ".state/vault-pass is missing (setup/README.md step 0)" >&2; exit 2; }
-source tools/env.sh
 mkdir -p .state/home .state/secrets .state/logs
 # demo/ posts to Slack as the rulebook does: the same environment (SLACK_BOT_TOKEN, DSGROW_SLACK_CHANNEL, tokens)
 env_args=()

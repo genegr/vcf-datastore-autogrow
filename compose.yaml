@@ -32,6 +32,24 @@ services:
     <<: *eda
     env_file: .state/eda.env
     restart: unless-stopped
+    # The network-facing service (5080 on every interface): the code is read-only, state/ (request files and locks) is
+    # the only writable path, .state/ (the vault password, the env files) is not visible at all (it reaches the
+    # container only as environment variables), and it keeps no capability. The tools service (eda) is the one that
+    # needs the whole tree.
+    volumes:
+      - ./:/work:ro
+      - ./state:/work/state
+    tmpfs:
+      - /work/.state
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      HOME: /tmp/dsgrow-home
+      ANSIBLE_CONFIG: /work/ansible.cfg
+      ANSIBLE_INVENTORY: /work/environments/${DSGROW_ENV:?set DSGROW_ENV in .env (see .env.example)}/inventory
+      DSGROW_STATE_DIR: /work/state
+      # the address the vcfops source listens on (the run host's .env; empty = every interface)
+      DSGROW_EDA_VCFOPS_BIND: ${DSGROW_EDA_VCFOPS_BIND:-0.0.0.0}
     command:
       - ansible-rulebook
       - --rulebook
@@ -41,7 +59,7 @@ services:
       - --vars
       - rulebooks/vars.yml
       - --env-vars
-      - DSGROW_EDA_VCFOPS_TOKEN,DSGROW_EDA_APPROVALS_TOKEN,DSGROW_APPROVAL_HMAC_SECRET
+      - DSGROW_EDA_VCFOPS_TOKEN,DSGROW_EDA_APPROVALS_TOKEN,DSGROW_APPROVAL_HMAC_SECRET,DSGROW_EDA_VCFOPS_BIND
       - --verbose
 
   bridge:
@@ -53,3 +71,5 @@ services:
     network_mode: host
     env_file: .state/bridge.env
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]

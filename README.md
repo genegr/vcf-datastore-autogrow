@@ -40,7 +40,12 @@ execute.yml: request file + expiry + approver + lock -> full preflight -> FlashA
 
 The rulebook is the hub, so every step is visible in one log. The approval path trusts nothing it receives:
 `execute.yml` re-reads the request file that `propose.yml` wrote, re-checks the approver and re-runs every check
-against live data. A forged or replayed event can't do damage.
+against live data. A forged or replayed event can't grow anything.
+
+The rulebook also starts no playbook for an event with an unexpected field: ansible renders event strings as templates
+when a playbook reads them, so every field of an alert or an approval must match an anchored allow-list in the rulebook
+first (`rulebooks/datastore_capacity.yml`). The `vcfops` webhook is still plain HTTP behind a bearer token: keep port 5080
+reachable from VCF Operations only.
 
 ## Safety model
 
@@ -50,8 +55,49 @@ against live data. A forged or replayed event can't do damage.
   free space after growth.
 - **One request per datastore in flight**, requests expire (4 h), every change names its approver.
 - **Partial failure is safe.** If the volume grew but VMFS didn't, the space is unused; approving again finishes it.
-- `tests/unit/test_repo_safety.py` enforces the rules mechanically: no delete/rename/eradicate outside the demo, no
-  direct FlashArray REST, only one write module in the execute path, rescans only where a LUN changed, and more.
+- **What the tests enforce** (and only that): `tests/unit/test_repo_safety.py` scans the setup, role and playbook text for
+  a few forbidden spellings and checks the execute order, the rescan rule and the demo's own removals;
+  `tests/unit/test_rule8_inventory.py` parses every task file and holds the execute path, the setup steps and the probes
+  to a reviewed list of modules, allows no removal outside `demo/` except the one named rollback
+  (`setup/vcfops_cleanup.yml`, VCF Operations objects this repo created) and keeps probes to GET plus authentication.
+  `tests/offline/test_flow.py` runs the real propose, execute, deny and cleared playbooks against a fake FlashArray,
+  vCenter and Slack: every refusal of rules 1-6, a replayed approval, a denied request, a Slack error after the work.
+  `tests/rulebook/` starts the real rulebook with hostile events. `tools/offline.sh` runs all of it (no network).
+
+## Security notes
+
+What a deployment still has to take care of, and what the code does about the rest:
+
+- **Event strings are templates.** Ansible renders the strings of an event when a playbook reads them, so every field of
+  an alert or an approval must match an anchored allow-list in the rulebook before a playbook starts
+  (`rulebooks/datastore_capacity.yml`); the bridge cleans the approver's name the same way.
+- **The `vcfops` webhook is plain HTTP behind a bearer token.** Whoever has the token can post a forged alert (a real
+  proposal with working buttons) or cancel a pending one. Firewall port 5080 to the VCF Operations nodes, set
+  `DSGROW_EDA_VCFOPS_BIND` in the run host's own `.env` (not a synced file) to the address on their network, and prefer
+  a TLS proxy on the run host
+  (bind the source to `127.0.0.1`, set `dsgrow_eda_vcfops_scheme: https` in the inventory, import the proxy's certificate
+  into VCF Operations). The `approvals` source is loopback only, with its own token and an HMAC.
+- **FlashArray TLS is not verified.** The `everpure.flasharray` 1.46.0 modules (every runtime FlashArray call) have no
+  option to verify the array's certificate, whatever `validate_certs` says in `flasharrays.yml` (that key and
+  `api_version` are read only by the REST probes). A host on the path to the management address could read the API
+  token: use a management network you trust, until the collection offers an option.
+- **Certificate checks of the setup steps, the demo and the probes** follow the inventory: `validate_certs` of each
+  vCenter and array, `dsgrow_vcfops_validate_certs` for VCF Operations. They are `true` unless the inventory says
+  otherwise; a lab with self-signed certificates says `false` in its own files.
+- **An alert names its datastore by name only.** A proposal is refused for a datastore less full than
+  `dsgrow_alert_min_used_pct` (75 %), which catches the same name in a vCenter that is out of scope; also limit the VCF
+  Operations notification rule to the datastores of the configured vCenters.
+- **One request, one approved size; a denial is recorded.** A request that is executing or done accepts only the size it
+  was approved for, and a replay of that approval does nothing; a denial is an event that marks the request `denied`.
+- **The vCenter account.** The `dsgrow` role has one privilege, `Host.Config.Storage`, which also allows creating,
+  removing and unmounting datastores: vSphere has nothing narrower, so "grow only" rests on the playbooks and their
+  tests. vCenter's default SSO policy expires a password after 90 days (check yours): `setup/vcenter_account.yml` does
+  not touch an existing user, so rotate by hand, then update `.state/secrets/vcenter-<key>.yml`, run `setup/deploy.yml`
+  and `docker compose up -d rulebook bridge`.
+- **Deployment.** The rulebook container sees the code read-only and none of `.state/`, and keeps no capability
+  (`compose.yaml`). `tools/sync.sh` refuses to copy over a datastore that is proposed or executing (`SYNC_FORCE=1`
+  overrides, after the owner's go-ahead); the running rulebook still executes the files in that directory, so sync only
+  between requests. `tools/probe.sh` and `tools/setup.sh` take a path of one shape and a short list of options.
 
 ## Sizing
 

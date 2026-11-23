@@ -4,6 +4,8 @@
 #   key   the stable internal id, the alias nested-vcf uses for the array: dsgrow's vault variable
 #         dsgrow_secret_fa_token_<key>, the secret file fa-<key>.yml and nested-vcf's vault_array_tokens[<key>] are
 #         named by it, so renaming `name` touches no secret and no container
+# validate_certs: read by the read-only REST probes only; the everpure.flasharray 1.46.0 modules cannot verify the
+# array's certificate (README "Security notes"), so the runtime connection is not verified whatever it says.
 # api_version: the REST 2.x version used; the lab arrays top out at 2.59 (nested-vcf skill flasharray-nvme),
 # confirmed by tests/probes/eui_serial.yml. The token is the dsgrow API user's (setup/fa_user.yml), from the vault or
 # the environment variable named by token_env. Names read back by tests/probes/fa_identity.yml (2026-11-20).

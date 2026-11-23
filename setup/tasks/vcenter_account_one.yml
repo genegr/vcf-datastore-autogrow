@@ -9,7 +9,7 @@
       GOVC_URL: "https://{{ va_vc.hostname }}/sdk"
       GOVC_USERNAME: "{{ va_vc.admin_user | default('administrator@' ~ va_vc.username.split('@')[1]) }}"
       GOVC_PASSWORD: "{{ dsgrow_lab_vc_admin_password }}"
-      GOVC_INSECURE: "1"
+      GOVC_INSECURE: "{{ '0' if (va_vc.validate_certs | default(true) | bool) else '1' }}"
       GOVC_PERSIST_SESSION: "false"
   no_log: true
 
@@ -70,7 +70,7 @@
     hostname: "{{ va_vc.hostname }}"
     username: "{{ va_admin }}"
     password: "{{ dsgrow_lab_vc_admin_password }}"
-    validate_certs: false
+    validate_certs: "{{ va_vc.validate_certs | default(true) | bool }}"
     local_role_name: "{{ va_role }}"
     local_privilege_ids: "{{ va_privileges }}"
     action: set
@@ -81,7 +81,7 @@
     hostname: "{{ va_vc.hostname }}"
     username: "{{ va_admin }}"
     password: "{{ dsgrow_lab_vc_admin_password }}"
-    validate_certs: false
+    validate_certs: "{{ va_vc.validate_certs | default(true) | bool }}"
     role: "{{ va_role }}"
     principal: "{{ va_sso_domain | upper }}\\dsgrow"
     object_name: "{{ va_vc.datacenter }}"
@@ -95,6 +95,6 @@
     hostname: "{{ va_vc.hostname }}"
     username: "{{ va_vc.username }}"
     password: "{{ lookup('ansible.builtin.vars', va_secret_var) }}"
-    validate_certs: false
+    validate_certs: "{{ va_vc.validate_certs | default(true) | bool }}"
   check_mode: false
   when: not ansible_check_mode or va_have_password

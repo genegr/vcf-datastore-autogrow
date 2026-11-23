@@ -34,15 +34,16 @@ only writer (re-checks everything, grows the volume to absolute bytes, rescans, 
 7. **No secrets or addresses in git.** Secrets: `.state/` on the run host, as env vars in the containers,
    `no_log: true`. Addresses: `environments/<env>/inventory/group_vars/dsgrow/site.yml` (gitignored, `dsgrow_site`).
 8. **Nothing deletes, renames, disconnects, unmounts, resignatures or eradicates**, except `demo/`, which removes
-   only its own objects after checking them against `.state/demo/state.json`. `tests/unit/test_repo_safety.py`
-   enforces it.
+   only its own objects after checking them against `.state/demo/state.json`. `tests/unit/test_repo_safety.py` and
+   `tests/unit/test_rule8_inventory.py` check it (module allow-lists; no removal outside `demo/` but the one named rollback).
 9. **Partial failure is safe**: volume grown, VMFS not = unused space; re-sending the approval finishes the job.
 10. **Lab changes are gated, one at a time**: dry run, the owner's go-ahead for that change, rollback known,
     read-back, rerun `changed=0` (skill `lab-change-gate`). Read-only probes and offline work need none. The demo
     phrases "initialize the demo", "start the demo", "now clean up the environment" are standing go-aheads for one
     run each, without a dry run (skill `dsgrow-demo`). Unclear intent: ask; never assume cleanup.
-11. **`execute.yml` runs only from the `approvals` source** with schema `dsgrow.approval.v1`. The `vcfops` rules
-    run only `propose.yml` and `cleared.yml`.
+11. **`execute.yml` runs only from the `approvals` source** with schema `dsgrow.approval.v1` (so does `deny.yml`, which
+    records a denial and changes no infrastructure). The `vcfops` rules run only `propose.yml` and `cleared.yml`.
+    Every field of an event must match the rulebook's allow-list first: Ansible renders event strings as templates.
 
 Never approve on the owner's behalf. Never touch a request or the lock while an expansion is in flight.
 
@@ -64,7 +65,7 @@ Never approve on the owner's behalf. Never touch a request or the lock while an 
 python -m pytest tests/unit bridge/tests          # workstation, pure Python
 bash tools/sync.sh                                # copy to the run host (SYNC_HOST in .sync.env)
 # run host, in the repo, with .env (DSGROW_ENV, DSGROW_LAB_DIR)
-bash tools/offline.sh                             # syntax + offline logic, no network
+bash tools/offline.sh                             # syntax, logic, the real rulebook and the real playbooks against a fake world; no network
 bash tools/probe.sh tests/probes/<probe>.yml      # read-only probes
 bash tools/setup.sh setup/<step>.yml [--confirm <step>.yml]    # gated change (dry run without --confirm)
 docker run --rm --network none -v "$PWD:/work" -w /work dsgrow-eda:1 python -m pytest -q -p no:cacheprovider tests/rulebook

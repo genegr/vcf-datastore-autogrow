@@ -21,7 +21,7 @@
         hostname: "{{ dd_vc.hostname }}"
         username: "{{ dd_admin }}"
         password: "{{ dsgrow_lab_vc_admin_password }}"
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
         datacenter: "{{ dd_vc.datacenter }}"
         datastore: "{{ dd.datastore }}"
       register: pw_ds

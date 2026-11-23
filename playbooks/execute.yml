@@ -50,20 +50,58 @@
               - dsgrow_request.status in ['proposed', 'executing', 'failed', 'done']
               - not (dsgrow_request.expires | dsgrow_request_expired(now(utc=true).timestamp() | int))
               - dsgrow_approver_id in dsgrow_approver_ids
+              # one request, one approved size: a request that is executing or done carries the target it was approved
+              # for, and only that target is accepted again (a failed one may be approved again with any size)
+              - dsgrow_request.status not in ['executing', 'done'] or dsgrow_recorded_target | int == dsgrow_target_bytes | int
             fail_msg: >-
               approval for request {{ dsgrow_rid }} refused:
               {% if dsgrow_approval.vc | default('') != dsgrow_request.vc or dsgrow_approval.ds | default('') != dsgrow_request.ds
                     or dsgrow_approval.dev | default('') != dsgrow_request.dev %}identifiers differ from the request;
               {% endif %}{% if dsgrow_request.status not in ['proposed', 'executing', 'failed', 'done'] %}request is {{ dsgrow_request.status }};
               {% endif %}{% if dsgrow_request.expires | dsgrow_request_expired(now(utc=true).timestamp() | int) %}request expired;
-              {% endif %}{% if dsgrow_approver_id not in dsgrow_approver_ids %}{{ dsgrow_approver_id }} is not an approver;{% endif %}
+              {% endif %}{% if dsgrow_approver_id not in dsgrow_approver_ids %}{{ dsgrow_approver_id }} is not an approver;
+              {% endif %}{% if dsgrow_request.status in ['executing', 'done'] and dsgrow_recorded_target | int != dsgrow_target_bytes | int %}request is
+              {{ dsgrow_request.status }} for {{ dsgrow_recorded_target | int | dsgrow_human_bytes }}, not for
+              {{ dsgrow_target_bytes | dsgrow_human_bytes }} (one request, one approved size);{% endif %}
             quiet: true
+          vars:
+            dsgrow_recorded_target: "{{ (dsgrow_request.approval | default({})).target_bytes | default(0) }}"
           tags: [preflight]
 
         - name: The vCenter of the request
           ansible.builtin.set_fact:
             dsgrow_vc: "{{ dsgrow_vcenters | selectattr('hostname', 'equalto', dsgrow_request.vc) | first }}"
             dsgrow_datastore_name: "{{ dsgrow_request.ds }}"
+
+        # A replay (a form opened before the first click, a resent event) of the approval a finished request already
+        # carries changes nothing: no rescan, no write, no new result (finding 4; CLAUDE.md "at target it does nothing").
+        # The one thing it may do is state hygiene: a run killed between "Done" and the lock release left the lock
+        # `executing` (blocking proposals until it expires); this request's own lock is released, nobody else's.
+        - name: Already done with this very target
+          when: dsgrow_request.status == 'done'
+          block:
+            - name: The datastore's lock
+              ansible.builtin.include_role:
+                name: dsgrow_state
+                tasks_from: lock_read
+
+            - name: Release the lock this finished request still holds
+              ansible.builtin.include_role:
+                name: dsgrow_state
+                tasks_from: lock_write
+              vars:
+                dsgrow_lock_new: {rid: "{{ dsgrow_rid }}", status: released, expires: 0}
+              when: dsgrow_lock.rid | default('') == dsgrow_rid and dsgrow_lock.status | default('') == 'executing'
+
+            - name: Nothing to do
+              ansible.builtin.debug:
+                msg: >-
+                  request {{ dsgrow_rid }} is already done for {{ dsgrow_target_bytes | dsgrow_human_bytes }}: nothing to do
+                  (approval by {{ dsgrow_approver_id }})
+
+        - name: Stop, nothing to do
+          ansible.builtin.meta: end_host
+          when: dsgrow_request.status == 'done'
 
         - name: The datastore's lock
           ansible.builtin.include_role:
@@ -172,46 +210,57 @@
           vars:
             dsgrow_lock_new: {rid: "{{ dsgrow_rid }}", status: released, expires: 0}
 
-        - name: Final message
-          ansible.builtin.set_fact:
-            dsgrow_slack_status: >-
-              :white_check_mark: *Expanded* by <@{{ dsgrow_approver_id }}>: FlashArray
-              {{ dsgrow_fa_array.name }} / {{ dsgrow_fa_volume_name | dsgrow_slack_escape }}
-              {{ dsgrow_fa_before_bytes | dsgrow_human_bytes }} → {{ dsgrow_fa_after_bytes | dsgrow_human_bytes }}{{
-              '' if dsgrow_fa_needs_extend | bool else ' (already at target)' }};
-              VMFS {{ dsgrow_vmfs_before_bytes | dsgrow_human_bytes }} → {{ dsgrow_vmfs_after_bytes | dsgrow_human_bytes }}
-              on {{ dsgrow_backing.hosts | map(attribute='name') | join(', ') }}.
+        # The work is done and written down: telling Slack is best effort. An error here must NOT reach the rescue
+        # below, which would rewrite a finished request as `failed`, post "VMFS was not expanded" and put the buttons
+        # back on an expanded datastore (finding 5). The request file stays the audit record.
+        - name: Tell Slack the result
+          block:
+            - name: Final message
+              ansible.builtin.set_fact:
+                dsgrow_slack_status: >-
+                  :white_check_mark: *Expanded* by <@{{ dsgrow_approver_id }}>: FlashArray
+                  {{ dsgrow_fa_array.name }} / {{ dsgrow_fa_volume_name | dsgrow_slack_escape }}
+                  {{ dsgrow_fa_before_bytes | dsgrow_human_bytes }} → {{ dsgrow_fa_after_bytes | dsgrow_human_bytes }}{{
+                  '' if dsgrow_fa_needs_extend | bool else ' (already at target)' }};
+                  VMFS {{ dsgrow_vmfs_before_bytes | dsgrow_human_bytes }} → {{ dsgrow_vmfs_after_bytes | dsgrow_human_bytes }}
+                  on {{ dsgrow_backing.hosts | map(attribute='name') | join(', ') }}.
 
-        - name: Status blocks
-          ansible.builtin.include_role:
-            name: dsgrow_slack
-            tasks_from: status
-          tags: [slack]
+            - name: Status blocks
+              ansible.builtin.include_role:
+                name: dsgrow_slack
+                tasks_from: status
+              tags: [slack]
 
-        - name: Update the proposal
-          ansible.builtin.include_role:
-            name: dsgrow_slack
-            tasks_from: api
-          vars:
-            dsgrow_slack_method: chat.update
-            dsgrow_slack_body:
-              channel: "{{ dsgrow_request.slack.channel }}"
-              ts: "{{ dsgrow_request.slack.ts }}"
-              text: "{{ dsgrow_datastore_name }} expanded to {{ dsgrow_vmfs_after_bytes | dsgrow_human_bytes }}"
-              blocks: "{{ dsgrow_slack_blocks }}"
-          tags: [slack]
+            - name: Update the proposal
+              ansible.builtin.include_role:
+                name: dsgrow_slack
+                tasks_from: api
+              vars:
+                dsgrow_slack_method: chat.update
+                dsgrow_slack_body:
+                  channel: "{{ dsgrow_request.slack.channel }}"
+                  ts: "{{ dsgrow_request.slack.ts }}"
+                  text: "{{ dsgrow_datastore_name }} expanded to {{ dsgrow_vmfs_after_bytes | dsgrow_human_bytes }}"
+                  blocks: "{{ dsgrow_slack_blocks }}"
+              tags: [slack]
 
-        - name: Result (thread)
-          ansible.builtin.include_role:
-            name: dsgrow_slack
-            tasks_from: api
-          vars:
-            dsgrow_slack_method: chat.postMessage
-            dsgrow_slack_body:
-              channel: "{{ dsgrow_request.slack.channel }}"
-              thread_ts: "{{ dsgrow_request.slack.ts }}"
-              text: "{{ dsgrow_slack_status }}"
-          tags: [slack]
+            - name: Result (thread)
+              ansible.builtin.include_role:
+                name: dsgrow_slack
+                tasks_from: api
+              vars:
+                dsgrow_slack_method: chat.postMessage
+                dsgrow_slack_body:
+                  channel: "{{ dsgrow_request.slack.channel }}"
+                  thread_ts: "{{ dsgrow_request.slack.ts }}"
+                  text: "{{ dsgrow_slack_status }}"
+              tags: [slack]
+          rescue:
+            - name: Slack was not told (the expansion is done and recorded)
+              ansible.builtin.debug:
+                msg: >-
+                  request {{ dsgrow_rid }} is done ({{ dsgrow_datastore_name }}), but Slack was not fully updated:
+                  {{ (ansible_failed_result.msg | default('?')) | string | truncate(500) }}
 
         - name: Job artifacts
           ansible.builtin.set_stats:
@@ -298,6 +347,38 @@
                   ts: "{{ dsgrow_request.slack.ts }}"
                   text: "Expansion of {{ dsgrow_request.ds }} failed"
                   blocks: "{{ dsgrow_slack_blocks }}"
+
+        # An approval that arrives after a denial (a Custom form opened before it) makes the bridge print "Approved" over
+        # "Denied". This run refused it; put the truth back in the message (best effort, never a second failure).
+        - name: Put the denial back in the message
+          when: dsgrow_request is defined and dsgrow_request.status | default('') == 'denied' and dsgrow_request.slack is defined
+          block:
+            - name: Denied text
+              ansible.builtin.set_fact:
+                dsgrow_slack_status: >-
+                  :no_entry_sign: *Denied* by <@{{ (dsgrow_request.denied | default({})).approver_id | default('?') }}>.
+                  An approval that arrived afterwards was refused: nothing changed.
+
+            - name: Status blocks
+              ansible.builtin.include_role:
+                name: dsgrow_slack
+                tasks_from: status
+
+            - name: Update the proposal
+              ansible.builtin.include_role:
+                name: dsgrow_slack
+                tasks_from: api
+              vars:
+                dsgrow_slack_method: chat.update
+                dsgrow_slack_body:
+                  channel: "{{ dsgrow_request.slack.channel }}"
+                  ts: "{{ dsgrow_request.slack.ts }}"
+                  text: "Denied"
+                  blocks: "{{ dsgrow_slack_blocks }}"
+          rescue:
+            - name: The message could not be corrected
+              ansible.builtin.debug:
+                msg: "request {{ dsgrow_rid }} is denied; the Slack message could not be corrected"
 
         - name: Fail the run
           ansible.builtin.fail:

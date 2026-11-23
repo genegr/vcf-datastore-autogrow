@@ -10,6 +10,15 @@ env_host=${SYNC_HOST-} env_dir=${SYNC_DIR-} env_opts=${SYNC_SSH_OPTS-}
 SYNC_HOST=${env_host:-${SYNC_HOST-}} SYNC_DIR=${env_dir:-${SYNC_DIR-}} SYNC_SSH_OPTS=${env_opts:-${SYNC_SSH_OPTS-}}
 : "${SYNC_HOST:?set SYNC_HOST=user@host (env or .sync.env)}"
 SYNC_DIR=${SYNC_DIR:-vsphere-dsgrow}
+# The running rulebook executes the code in $SYNC_DIR: never copy over a datastore that is in flight or waiting for a
+# click (state/locks/). SYNC_FORCE=1 overrides, only with the owner's go-ahead. An unreachable host also stops here.
+# shellcheck disable=SC2086
+if [[ ${SYNC_FORCE-} != 1 ]]; then
+  ssh ${SYNC_SSH_OPTS:-} "$SYNC_HOST" bash -s -- "$SYNC_DIR" < "$ROOT/tools/lock_check.sh" || {
+    echo "not synced: a datastore is in flight or waiting for a click, or the host did not answer (SYNC_FORCE=1 overrides)" >&2
+    exit 3
+  }
+fi
 # shellcheck disable=SC2086
 tar -C "$ROOT" -czf - \
   --exclude=./.git --exclude=./.state --exclude=./state --exclude=./.sync.env --exclude=./.env --exclude=./.venv \

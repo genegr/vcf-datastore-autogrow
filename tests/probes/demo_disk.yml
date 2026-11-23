@@ -19,7 +19,7 @@
       hostname: "{{ dd_vc.hostname }}"
       username: "{{ dd_admin }}"
       password: "{{ dsgrow_lab_vc_admin_password }}"
-      validate_certs: false
+      validate_certs: "{{ dd_vc.validate_certs | default(true) | bool }}"
     dsgrow_datastore_backing: *dd_vc_args
   tasks:
     - name: The VM's disks

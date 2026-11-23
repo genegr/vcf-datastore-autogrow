@@ -6,13 +6,25 @@
 # ansible-rulebook sets that field itself, a sender can't forge it (the body sits under payload).
 # Secrets come from --env-vars DSGROW_EDA_VCFOPS_TOKEN,DSGROW_EDA_APPROVALS_TOKEN,DSGROW_APPROVAL_HMAC_SECRET.
 # Ports: 5000 is taken on the run host by another project (2026-11-19).
+#
+# EVENT STRINGS ARE TEMPLATES. ansible-rulebook writes the matched event to the playbook's extra vars, and ansible-core
+# renders extra-vars strings as Jinja when a playbook reads them: a resource_name of "{{ lookup('pipe', ...) }}" would
+# run inside this container, which holds every credential. So no playbook starts unless EVERY field of the event
+# matches an anchored allow-list below. The patterns are plain character classes (no backslash, lookaround or doubled
+# brace), so they mean the same to the rulebook engine's Java matcher and to Python. The identifiers a playbook acts on
+# (alert_id, resource_id, resource_name, adapter_instance) have strict character sets; every other field is text
+# (status, criticality, times, symptoms, link) and only excludes braces and a leading "#" (a "#jinja2:" header), so
+# a real value VCF Operations formats in an unexpected way cannot drop an alert. A new payload field needs a
+# pattern in every rule that reads the event: tests/unit/test_rulebook_allowlist.py fails until it has one. An event
+# that fails a pattern falls through to the last rule and is only logged. The playbooks' own re-checks
+# (roles/dsgrow_resolve/tasks/alert_input.yml) run AFTER the rendering and are not a guard.
 - name: dsgrow datastore capacity
   hosts: all
   execution_strategy: sequential        # one playbook at a time: no two approvals race on the same request
   sources:
     - name: vcfops
       ansible.eda.webhook:
-        host: 0.0.0.0
+        host: "{{ DSGROW_EDA_VCFOPS_BIND }}"      # compose.yaml, from the run host's own .env (default 0.0.0.0)
         port: 5080
         token: "{{ DSGROW_EDA_VCFOPS_TOKEN }}"
     - name: approvals
@@ -28,11 +40,25 @@
     - name: Propose expansion for a datastore capacity alert
       condition: >
         event.meta.source.name == "vcfops"
+        and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
         and event.payload.schema == "dsgrow.vcfops.v1"
         and event.payload.event in ["new", "updated"]
         and event.payload.resource_kind == "Datastore"
         and event.payload.alert_definition in vars.dsgrow_alert_definitions
         and event.payload.alert_id is defined
+        and event.payload.alert_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
+        and event.payload.resource_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
+        and event.payload.resource_name is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and (event.payload.adapter_instance is not defined
+             or event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$"))
+        and event.payload.status is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.criticality is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.adapter_kind is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.create_time is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.update_time is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.cancel_time is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.symptoms is match("^([^{}#][^{}]{0,4094})?$")
+        and event.payload.link is match("^(https?://[^{}<>| ]{1,500})?$")
       # Per ALERT, not per datastore (owner 2026-11-21: "alert the admin every time the datastore passes the critical
       # limit"): every crossing is a new VCF Ops alert with its own id and gets a proposal; the "updated" events of the
       # same alert stay throttled. Overlap is refused by propose.yml (one request in flight per datastore, the lock).
@@ -48,10 +74,25 @@
     - name: Alert cleared
       condition: >
         event.meta.source.name == "vcfops"
+        and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
         and event.payload.schema == "dsgrow.vcfops.v1"
         and event.payload.event == "canceled"
         and event.payload.resource_kind == "Datastore"
         and event.payload.alert_definition in vars.dsgrow_alert_definitions
+        and event.payload.alert_id is defined
+        and event.payload.alert_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
+        and event.payload.resource_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
+        and event.payload.resource_name is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and (event.payload.adapter_instance is not defined
+             or event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$"))
+        and event.payload.status is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.criticality is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.adapter_kind is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.create_time is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.update_time is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.cancel_time is match("^([^{}#][^{}]{0,254})?$")
+        and event.payload.symptoms is match("^([^{}#][^{}]{0,4094})?$")
+        and event.payload.link is match("^(https?://[^{}<>| ]{1,500})?$")
       action:
         run_playbook:
           name: playbooks/cleared.yml
@@ -59,11 +100,55 @@
     - name: Approved expansion
       condition: >
         event.meta.source.name == "approvals"
+        and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
         and event.payload.schema == "dsgrow.approval.v1"
         and event.payload.decision == "approve"
+        and event.payload.rid is match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        and event.payload.vc is match("^[A-Za-z0-9.-]{1,253}$")
+        and event.payload.ds is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and event.payload.dev is match("^(naa[.]624a9370[0-9a-f]{24}|eui[.]00[0-9a-f]{14}24a937[0-9a-f]{10})$")
+        and event.payload.tgt > 0
+        and event.payload.approver_id is match("^[UW][A-Z0-9]{2,20}$")
+        and event.payload.approver_name is match("^[A-Za-z0-9 ._()@-]{0,80}$")
+        and event.payload.channel is match("^[CGD][A-Z0-9]{2,31}$")
+        and event.payload.ts is match("^[0-9]{1,12}[.][0-9]{1,8}$")
       action:
         run_playbook:
           name: playbooks/execute.yml
+
+    # A denial is recorded too (playbooks/deny.yml: status denied, who, when), so no later approval of that request can
+    # grow anything. It changes no infrastructure; like execute.yml it runs only for an event of the `approvals` source.
+    - name: Denied request
+      condition: >
+        event.meta.source.name == "approvals"
+        and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
+        and event.payload.schema == "dsgrow.approval.v1"
+        and event.payload.decision == "deny"
+        and event.payload.rid is match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        and event.payload.vc is match("^[A-Za-z0-9.-]{1,253}$")
+        and event.payload.ds is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and event.payload.dev is match("^(naa[.]624a9370[0-9a-f]{24}|eui[.]00[0-9a-f]{14}24a937[0-9a-f]{10})$")
+        and event.payload.approver_id is match("^[UW][A-Z0-9]{2,20}$")
+        and event.payload.approver_name is match("^[A-Za-z0-9 ._()@-]{0,80}$")
+        and event.payload.channel is match("^[CGD][A-Z0-9]{2,31}$")
+        and event.payload.ts is match("^[0-9]{1,12}[.][0-9]{1,8}$")
+      action:
+        run_playbook:
+          name: playbooks/deny.yml
+
+    # An alert event for OUR alert definition that failed the allow-list above: no playbook starts and no playbook reads
+    # it, the log says so. When a real alert is missing, compare its fields with tests/fixtures/vcfops (--print-events).
+    - name: Rejected alert
+      condition: >
+        event.meta.source.name == "vcfops"
+        and event.payload.schema == "dsgrow.vcfops.v1"
+        and event.payload.alert_definition in vars.dsgrow_alert_definitions
+      action:
+        debug:
+          msg: >-
+            dsgrow REJECTED a vcfops event ({{ event.payload.event | default('?') }}, resource
+            {{ event.payload.resource_name | default('?') | string | truncate(80) }}): a field is outside the allow-list
+            in rulebooks/datastore_capacity.yml, no playbook was started
 
     - name: Ignore and log everything else
       condition: event.meta is defined

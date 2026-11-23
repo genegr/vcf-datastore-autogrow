@@ -16,6 +16,7 @@ _DEV = re.compile(r"^(naa\.624a9370[0-9a-f]{24}|eui\.00[0-9a-f]{14}24a937[0-9a-f
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
 _HOST = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 _SIZE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(t|tb|tib|g|gb|gib)?\s*$", re.IGNORECASE)
+_NOT_NAME_CHAR = re.compile(r"[^A-Za-z0-9 ._()@-]")
 
 
 class Invalid(ValueError):
@@ -31,6 +32,15 @@ class Request:
     cur: int
     exp: int
     tgt: int | None = None
+
+
+def clean_name(value) -> str:
+    """A Slack user name made safe to travel in the approval event: at most 80 characters of [A-Za-z0-9 ._()@-], every
+    other character becomes '_' (a character of the set: the replacement must pass the rulebook too). The rulebook only
+    starts execute.yml for an approver_name that matches this set (rulebooks/datastore_capacity.yml;
+    tests/unit/test_rulebook_allowlist.py pins both to each other), because ansible renders event strings as templates
+    and a name like "{{ ... }}" must never reach a playbook."""
+    return _NOT_NAME_CHAR.sub("_", str(value or ""))[:80]
 
 
 def human(value: int) -> str:

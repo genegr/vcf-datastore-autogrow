@@ -11,6 +11,11 @@ dsgrow_fa_min_free_pct_after: 20            # array physical free space required
 dsgrow_request_ttl_hours: 4
 dsgrow_throttle: "4 hours"                  # rulebook throttle per alert, resource_id + alert_id (hardcoded there: keep equal)
 dsgrow_capacity_tolerance_pct: 1            # verify step: VMFS capacity vs device size
+# An alert names its datastore by NAME only, so an alert for a datastore outside the configured vCenters can resolve to a
+# same-named one inside them. A proposal is refused for a datastore less full than this (the alert fires at 80 %, a
+# margin below it covers the difference between VCF Ops' figure and vCenter's). 0 turns the check off: needed when the
+# time-remaining symptom (setup/vcfops.yml) also raises alerts below 80 %.
+dsgrow_alert_min_used_pct: 75
 
 # The alert definitions the rulebook acts on (names as VCF Ops sends ${ALERT_DEFINITION}; setup/vcfops.yml)
 dsgrow_alert_definitions:

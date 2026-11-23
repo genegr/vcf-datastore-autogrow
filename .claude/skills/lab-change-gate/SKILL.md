@@ -20,7 +20,10 @@ Steps, owners and rollbacks: `setup/README.md`. Logs: `.state/logs/<playbook>-<U
 
 - Edit on the Windows workstation. No heredocs or nested quoting there: write files, then copy or sync them.
 - `bash tools/sync.sh` copies the tree to the run host (`SYNC_HOST` from the gitignored `.sync.env`). It never
-  deletes: after removing or renaming a file, delete it on the run host too.
+  deletes: after removing or renaming a file, delete it on the run host too. It refuses while a datastore lock is
+  proposed/executing/cleaning (`SYNC_FORCE=1` only with the owner's go-ahead). Without `SYNC_DIR` it writes the LIVE
+  checkout the rulebook executes; for offline tests copy to a scratch directory (`SYNC_DIR=dsgrow-scratch bash
+  tools/sync.sh`) and run the checks there, in containers (`bash tools/offline.sh`), touching no service.
 - On the run host, in the repo, everything runs in the `dsgrow-eda:1` image. `.env` names the environment
   (`DSGROW_ENV` → `environments/<env>/inventory/`, passed as `dsgrow_env`) and the optional lab directory mounted at `/lab`:
   - `bash tools/probe.sh tests/probes/<probe>.yml`: read-only probes; `environments/<env>/probes/` holds one lab's own investigations.

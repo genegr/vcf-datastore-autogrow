@@ -1,0 +1,13 @@
+{
+  "schema": "dsgrow.approval.v1",
+  "decision": "deny",
+  "rid": "0b5e6f1c-7d2a-4e8b-9c3f-1a2b3c4d5e6f",
+  "vc": "vcenter01.example.lab",
+  "ds": "ds-capacity01",
+  "dev": "eui.00361019ecace43d24a93783000120a4",
+  "approver_id": "U0DEMO0001",
+  "approver_name": "demo-approver",
+  "channel": "C0DEMO0001",
+  "ts": "1763546400.000100",
+  "sent_at": 1763546460
+}

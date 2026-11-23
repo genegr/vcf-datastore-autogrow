@@ -13,7 +13,7 @@ import time
 
 import messages
 import rulebook_client
-from validate import Invalid, Request, check, human, parse_request, parse_size
+from validate import Invalid, Request, check, clean_name, human, parse_request, parse_size
 
 log = logging.getLogger("dsgrow.bridge")
 
@@ -62,6 +62,18 @@ class Bridge:
     def _authorised(self, user_id) -> bool:
         return user_id in self.cfg.approver_ids
 
+    def _event(self, decision, req, user_id, user_name, channel, ts, target=None):
+        """The dsgrow.approval.v1 event. Only identifiers, the request id, the target and the approver travel; the name
+        is cleaned because ansible renders event strings as templates (validate.clean_name)."""
+        event = {
+            "schema": rulebook_client.SCHEMA, "decision": decision, "rid": req.rid, "vc": req.vc, "ds": req.ds,
+            "dev": req.dev, "approver_id": user_id, "approver_name": clean_name(user_name), "channel": channel,
+            "ts": ts, "sent_at": int(self.clock()),
+        }
+        if target is not None:
+            event["tgt"] = target
+        return event
+
     # ------------------------------------------------------------------ approve (a size button or the modal)
     def approve(self, *, user_id, user_name, channel, ts, blocks, button_value, target=None, action_id="", label=""):
         """Returns None when the event was sent, else the reason shown to the user.
@@ -102,11 +114,7 @@ class Bridge:
         self.slack.chat_update(channel=channel, ts=ts, text="Approved: %s" % human(target),
                                blocks=messages.status_blocks(blocks, ":hourglass_flowing_sand: *Approved* by %s for "
                                                              "*%s*, handing over to Ansible…" % (who, human(target))))
-        event = {
-            "schema": rulebook_client.SCHEMA, "decision": "approve", "rid": req.rid, "vc": req.vc, "ds": req.ds,
-            "dev": req.dev, "tgt": target, "approver_id": user_id, "approver_name": str(user_name or "")[:80],
-            "channel": channel, "ts": ts, "sent_at": int(self.clock()),
-        }
+        event = self._event("approve", req, user_id, user_name, channel, ts, target)
         try:
             self.sender(self.cfg.approvals_url, self.cfg.approvals_token, self.cfg.hmac_secret, event)
         except rulebook_client.SendError as exc:
@@ -162,7 +170,9 @@ class Bridge:
                             action_id="dsgrow_custom", label="Custom: %s" % str(size_text).strip()[:40])
 
     # ------------------------------------------------------------------ deny
-    def deny(self, *, user_id, channel, ts, blocks, button_value):
+    def deny(self, *, user_id, channel, ts, blocks, button_value, user_name=""):
+        """A denial is an event too (decision deny): the rulebook records it in the request file, so a Custom form that
+        was open before it, or any later approval, finds the request denied and grows nothing (finding 3)."""
         if not self._authorised(user_id):
             self._ephemeral(channel, user_id, ":no_entry: You are not an approver for datastore expansions.")
             return "not an approver"
@@ -179,6 +189,17 @@ class Bridge:
                                blocks=messages.status_blocks(blocks, ":no_entry_sign: *Denied* by %s. Nothing changed; "
                                                              "no new proposal for this datastore until the request "
                                                              "expires." % who))
+        try:
+            self.sender(self.cfg.approvals_url, self.cfg.approvals_token, self.cfg.hmac_secret,
+                        self._event("deny", req, user_id, user_name, channel, ts))
+        except rulebook_client.SendError as exc:
+            log.warning("denial %s not delivered: %s", req.rid, exc)
+            self.slack.chat_update(channel=channel, ts=ts, text="Denial not delivered",
+                                   blocks=messages.status_blocks(blocks, ":warning: The denial by %s could not be handed "
+                                                                 "over (%s). It is not recorded; try again." % (who, exc),
+                                                                 keep_actions=True))
+            self.claims.release(req.rid)
+            return str(exc)
         log.info("request %s denied by %s", req.rid, user_id)
         return None
 
@@ -237,5 +258,6 @@ def register(app, bridge):
     def on_deny(ack, body):
         ack()
         bridge.deny(
-            user_id=body["user"]["id"], channel=body["container"]["channel_id"], ts=body["container"]["message_ts"],
+            user_id=body["user"]["id"], user_name=body["user"].get("name") or body["user"].get("username"),
+            channel=body["container"]["channel_id"], ts=body["container"]["message_ts"],
             blocks=body.get("message", {}).get("blocks", []), button_value=_value(body))
