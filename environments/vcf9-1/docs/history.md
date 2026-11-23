@@ -662,3 +662,31 @@ dsgrow-demo01 1.8 % of 199.75 GiB, volume 200 GiB, lock released.
   esx07-09 equal to the API and esxcli values. Type info of vim.EsxCLI.nvme.info: methods get() and set(hostnqn). So the
   NQN can be set remotely through this internal path (not done; a lab change). Temporary probe files removed. Skill
   vmfs-datastore-expand and nested-vcf's flasharray-nvme skill note it.
+
+## 2026-11-23: the code review's fixes deployed (rulebook and bridge restarted)
+
+PR #1 (merge bce615a, commit 401a349): event allow-lists in the rulebook, a recorded denial (deny.yml), one request one
+approved size, Slack errors after the work no longer fail it, inventory-driven certificate checks, read-only rulebook
+container without capabilities, safer tools/sync/probe/setup scripts, and the offline tests for all of it. Deployed in
+steps, each with the owner's go-ahead ("go ahead with steps 1 and 2", "step 3", "step 4"):
+- Before: nothing in flight (both locks released; 11 requests done, 1 cleared); the live checkout was byte-identical to
+  b8e7763 (165 files, only .env and site.yml untracked); the new compose.yaml validated (docker compose config).
+- Step 1 (additive): backup ~/dsgrow-backup-b8e7763.tgz (180 KB, mode 600, no .state or state/) and the image tag
+  dsgrow-bridge:1-before-review-fixes (3995c451279a) as the bridge's rollback.
+- Step 2: tools/sync.sh (its new lock check ran, nothing in flight). Read-back: all 184 live files equal merged main
+  (sha256), state/ untouched (12 requests, 2 locks), both services still up with their old uptime. The playbooks on disk
+  were new for the old rulebook until step 3 (they accept the old events).
+- Step 3, 22:12 UTC: docker compose up -d rulebook (only it). Read-back: "Waiting for events, ruleset: dsgrow datastore
+  capacity", 0.0.0.0:5080 and 127.0.0.1:5081, user 1000, capdrop ALL, no-new-privileges, the checkout read-only, state/
+  the only writable mount, /work/.state masked by a tmpfs, HOME /tmp/dsgrow-home, DSGROW_EDA_VCFOPS_BIND 0.0.0.0 (not
+  set in .env: the exposure is unchanged); ansible-playbook --syntax-check of propose, execute, deny and cleared ok
+  inside the container.
+- Step 4, 22:14 UTC: docker compose build bridge (image 9fbc68c7b473) and up -d bridge. Read-back: Slack session
+  established, "Bolt app is running", capdrop ALL, no mounts, the new code in the image (deny event, clean_name, proxy
+  bypass); the rulebook not touched.
+- Order: the rulebook first, then the bridge: the new bridge sends a deny event, which the old rulebook would have
+  dropped while Slack said "Denied".
+- Rollback (not needed): untar the backup over ~/vsphere-dsgrow and docker compose up -d rulebook; docker tag
+  dsgrow-bridge:1-before-review-fixes dsgrow-bridge:1 and docker compose up -d bridge.
+- Not yet proven live: a real event through the hardened rulebook and the new bridge (the next alert, or the demo
+  cycle), and setup/vcfops.yml's new check of the stored webhook URL (its next dry run).
