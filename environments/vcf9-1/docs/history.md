@@ -690,3 +690,45 @@ steps, each with the owner's go-ahead ("go ahead with steps 1 and 2", "step 3", 
   dsgrow-bridge:1-before-review-fixes dsgrow-bridge:1 and docker compose up -d bridge.
 - Not yet proven live: a real event through the hardened rulebook and the new bridge (the next alert, or the demo
   cycle), and setup/vcfops.yml's new check of the stored webhook URL (its next dry run).
+
+## 2026-11-23 (evening): the first real alert was dropped by the allow-list; fixed, redeployed, proven end to end
+
+- Init (owner: "initialize the demo", `.state/logs/init-20261123T221738Z.log`, 22:17 UTC): dry run first (init.yml had
+  changed: the certificate setting now comes from the inventory) ok=30 changed=3; real run ok=67 changed=13 failed=0,
+  2 min 59 s. Read-back: dsgrow-demo01 199.75 GiB at 1.8 %, volume 200 GiB, lock released.
+- Start (owner: "start the demo", `start-20261123T222242Z.log`, 22:22 UTC): dry run ok, real run ok=37/11 changed=2/4
+  failed=0, 54 s; 85.0 % after 37 s, a 161.94 GiB thick disk, Slack "Demo started".
+- INCIDENT, 22:23:36 UTC: VCF Operations posted the "new" alert to /endpoint (HTTP 200) and the rulebook REJECTED it
+  ("dsgrow REJECTED a vcfops event (new, resource dsgrow-demo01)"): a field of the real payload was outside the allow-list
+  deployed at 22:12. No playbook started, no request or lock was written, no proposal in Slack (the owner reported it
+  at about 22:30). The payload is not logged, so the failing field was not identified; the cause is a pattern written
+  against my own fixtures and stricter than the real data (candidates: a link that is not an http URL, an unresolved
+  ${PLACEHOLDER} with its braces, a text field over the length cap). The rejection log was added in the first place so a
+  drop is never silent; it did not say which value, so it now does.
+- Fix (branch fix-allowlist-real-payload): the identifiers (alert_id, resource_id, resource_name) stay strict; the text a
+  playbook shows (criticality, cancel_time, link) only refuses a Jinja opener ({{, {%, {#) and a leading #; the fields no
+  playbook reads (status, adapter_kind, the times, symptoms) have no pattern, so they cannot drop an alert. That is safe
+  because nothing renders an event as a whole (a test forbids it) and the real playbooks run with template text in each
+  of those fields without rendering it (tests/offline/test_flow.py, with a positive control that a field a playbook
+  reads IS rendered). A test now finds the fields the playbooks read by scanning them and requires a pattern for each.
+  The REJECTED line prints the values it saw. Verified in containers on the run host: 363 Python tests, the real
+  rulebook (the odd-but-real event is proposed, every hostile one is refused), 55 flow tests, lint.
+- Redeploy (owner: "go ahead with the restart", 22:46 UTC): backup ~/dsgrow-backup-58b1f5a.tgz (221 KB), tools/sync.sh
+  (lock check ok; all 184 live files equal the tested tree, site.yml untouched), then docker compose up -d
+  --force-recreate rulebook (compose.yaml had not changed, so a plain up -d would have kept the old container).
+  Read-back: new container ready 22:46:55, 5080 and 127.0.0.1:5081, capdrop ALL, checkout read-only, state/ the only
+  writable mount, all four playbooks parse inside it; the bridge untouched. Rollback (not needed): untar the backup,
+  docker compose up -d --force-recreate rulebook.
+- Cleanup (owner: "now clean up the environment", `cleanup-20261123T224959Z.log`, 22:49 UTC): dry run ok=44 changed=9,
+  real run ok=63 changed=11 failed=0, 1 min 55 s. Read-back: datastore and volume absent, lock released. VCF Operations
+  then cancelled the alert that had been dropped; cleared.yml failed twice at 22:51 ("exists in 0 of the configured
+  vCenters": the datastore was already gone). No request existed, nothing was written.
+- Init (owner: "initialize the demo", `init-20261123T225326Z.log`): ok=67 changed=13 failed=0, 3 min 03 s.
+- Start (owner: "start the demo", `start-20261123T225702Z.log`, 22:57 UTC): ok=37/11 changed=2/4 failed=0, 53 s; 85.0 %
+  after 36 s. Proposal 22:59:09 (a2689ce4-...) 256 / 272 / 288 GiB; the owner clicked 256 GiB (dsgrow_approve_1) at 22:59:28;
+  done 23:00:18, 51 s after the click: volume 200 -> 256 GiB, VMFS 199.75 -> 255.75 GiB on esx07-09. Read-back: request
+  done, no failure keys, approver recorded with its cleaned name, 66.4 % of 255.75 GiB, lock released, no REJECTED line
+  since the restart. First end-to-end run of the code review's fixes: the real payload accepted, the rebuilt bridge,
+  and a real FlashArray grow and vCenter expand through the read-only, capability-free rulebook container.
+- Not proven live yet: a Deny (covered offline and by the real-engine rulebook test) and setup/vcfops.yml's check of the
+  stored webhook URL (its next dry run). The demo is left initialized and expanded to 256 GiB.

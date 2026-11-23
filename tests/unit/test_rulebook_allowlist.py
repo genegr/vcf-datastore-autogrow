@@ -35,7 +35,6 @@ HOSTILE = [
     "ds-capacity01{{ 7 * 7 }}",
     "ds-capacity01\n{{ 7 * 7 }}",
     " {{1}}",
-    "{",
     "{{",
 ]
 
@@ -112,13 +111,55 @@ def test_every_playbook_rule_checks_the_endpoint():
 
 
 # ------------------------------------------------------------------ coverage: no field may reach a playbook unchecked
-def test_vcfops_rules_cover_every_field_of_the_contract():
-    required = _template_fields()
+# What the playbooks and roles READ of an event, found in their source: a field a playbook starts reading must get a
+# pattern in the rulebook in the same change, or this fails.
+_READ = {
+    "vcfops": re.compile(r"\b(?:dsgrow_alert|ansible_eda\.event\.payload)\.([A-Za-z_]+)"),
+    "approve": re.compile(r"\bdsgrow_approval\.([A-Za-z_]+)"),
+    "deny": re.compile(r"\bdsgrow_denial\.([A-Za-z_]+)"),
+}
+# a field of the alert the rulebook checks by value, not by pattern
+_BY_VALUE = {"schema", "event", "resource_kind", "alert_definition"}
+
+
+def _fields_read(kind):
+    found = {}
+    for d in ("playbooks", "roles"):
+        for path in sorted((ROOT / d).rglob("*")):
+            if path.suffix in (".yml", ".yaml", ".j2") and "group_vars" not in path.parts:
+                for field in _READ[kind].findall(path.read_text(encoding="utf-8")):
+                    found.setdefault(field, path.relative_to(ROOT).as_posix())
+    return found
+
+
+def test_every_field_a_playbook_reads_from_an_alert_has_a_pattern():
+    read = _fields_read("vcfops")
+    assert {"alert_id", "resource_id", "resource_name", "criticality", "cancel_time", "link", "adapter_instance"} <= set(read), read
     for rule in _vcfops_rules():
         covered = {f for (scope, f) in _patterns(rule) if scope == "payload"} | _equal_fields(rule)
-        assert required <= covered, "%s: no allow-list for %s" % (rule["name"], sorted(required - covered))
-        assert ("payload", "adapter_instance") in _patterns(rule), "the optional field has a pattern too"
+        missing = {f: where for f, where in read.items() if f not in covered}
+        assert not missing, "%s: a playbook reads %s but the rulebook has no pattern for it" % (rule["name"], missing)
     assert len(_vcfops_rules()) == 2
+
+
+def test_the_fields_no_playbook_reads_have_no_pattern_so_they_can_never_drop_an_alert():
+    """status, adapter_kind, the times and symptoms: inert (ansible-core renders an item only when it is read), so a value
+    VCF Operations formats in an unexpected way must not cost a proposal."""
+    read = set(_fields_read("vcfops"))
+    unread = _template_fields() - read - _BY_VALUE
+    assert {"status", "adapter_kind", "create_time", "update_time", "symptoms"} <= unread, unread
+    for rule in _vcfops_rules():
+        patterned = {f for (scope, f) in _patterns(rule) if scope == "payload"}
+        assert not (patterned & unread), "%s: a pattern for a field nothing reads: %s" % (rule["name"], patterned & unread)
+
+
+def test_every_field_the_approval_and_denial_playbooks_read_has_a_pattern():
+    for kind, rule in (("approve", _approvals_rule()), ("deny", _approvals_rule("deny"))):
+        read = set(_fields_read(kind))
+        covered = {f for (scope, f) in _patterns(rule) if scope == "payload"}
+        missing = read - covered - {"schema", "decision", "tgt"}
+        assert not missing, "%s: read by the playbook, no pattern: %s" % (kind, sorted(missing))
+    assert {"rid", "tgt", "approver_id", "approver_name", "vc", "ds", "dev"} <= set(_fields_read("approve"))
 
 
 def test_fixtures_carry_no_field_outside_the_contract():
@@ -205,30 +246,27 @@ def test_no_field_accepts_template_text_around_a_legitimate_value(hostile):
                     assert not re.fullmatch(pattern, value), "%s: %s accepts %r" % (rule["name"], field, value)
 
 
-@pytest.mark.parametrize("link", ["https://ops.example.lab/x>|<!channel>", "https://ops.example.lab/x|<!here>",
-                                  "https://ops.example.lab/<@U0INTRUDER>", "https://a b", "javascript:alert(1)"])
-def test_the_alert_link_cannot_carry_slack_markup(link):
-    """The link ends up in a Slack <url|label>: a > or | would end it and let the rest be markup (<!channel>)."""
-    for rule in _vcfops_rules():
-        assert not re.fullmatch(_patterns(rule)[("payload", "link")], link), (rule["name"], link)
+# the text a playbook shows (criticality, cancel_time, link): only a Jinja opener or a leading "#" is refused
+TEXT_OK = ["", "N/A", "WARNING", "Warnung", "${CANCEL_TIME}", "${LINK_TO_ALERT}", "{", "a{b", "x{", "{x", "$ {x}",
+           "https://192.0.2.5/ui/index.action#/object/1/alerts?a=1&b=2", "ui/index.action#/object", "not a url at all",
+           "Nov 23, 2026, 9:15:03 PM UTC", "1763932503000", "x" * 3000, "line one\nline two",
+           "https://ops.example.lab/x>|<!channel>"]      # Slack markup is the proposal template's job (its own test)
+TEXT_REFUSED = ["{{", "{{ 7 * 7 }}", "a{{b", "{%", "{% if 1 %}", "a{%b", "{#", "{# c #}", "x{#", "#", "#x",
+                "#jinja2:variable_start_string:'[%'", "ok{{ lookup('pipe', 'id') }}", "line\n{{ 1 }}"]
 
 
-@pytest.mark.parametrize("field,value", [
-    ("create_time", "Nov 23, 2026, 9:15:03 PM UTC"),       # Java 20+ formats a time with a narrow no-break space
-    ("update_time", "2026-11-23T21:15:03.123+0100"), ("cancel_time", "1763932503000"), ("cancel_time", ""),
-    ("status", "ACTIVE"), ("status", "Aktiv (cancelled)"), ("criticality", "IMMEDIATE"), ("criticality", "Warnung"),
-    ("adapter_kind", "VMWARE"), ("adapter_kind", "VMware vSphere (8.0)"), ("symptoms", "N/A"),
-    ("symptoms", "used >= 80 %, free < 20 % – two symptoms"), ("symptoms", "x" * 4000), ("link", ""),
-    ("link", "https://192.0.2.5/ui/index.action#/object/1/alerts?a=1&b=2"),
-])
-def test_text_fields_accept_unusual_but_harmless_values(field, value):
-    """Only identifiers are strict: a real value VCF Operations formats in an unexpected way must not drop an alert."""
+@pytest.mark.parametrize("field", ["criticality", "cancel_time", "link"])
+def test_text_fields_accept_real_looking_values_and_refuse_a_jinja_opener(field):
     for rule in _vcfops_rules():
-        assert re.fullmatch(_patterns(rule)[("payload", field)], value), (rule["name"], field, value[:40])
+        pattern = _patterns(rule)[("payload", field)]
+        for value in TEXT_OK:
+            assert re.fullmatch(pattern, value), (rule["name"], field, value[:40])
+        for value in TEXT_REFUSED:
+            assert not re.fullmatch(pattern, value), (rule["name"], field, value[:40])
 
 
 def test_identifiers_do_not_accept_a_trailing_newline():
-    """The free-text fields (symptoms, link) may hold a newline: without a brace it cannot start a template."""
+    """The text fields (link, ...) may hold a newline: without a Jinja opener it cannot start a template."""
     payload = _fixture("vcfops/new_datastore_80.json")
     for rule in _vcfops_rules():
         patterns = _patterns(rule)

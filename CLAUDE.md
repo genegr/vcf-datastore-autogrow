@@ -43,7 +43,8 @@ only writer (re-checks everything, grows the volume to absolute bytes, rescans, 
     run each, without a dry run (skill `dsgrow-demo`). Unclear intent: ask; never assume cleanup.
 11. **`execute.yml` runs only from the `approvals` source** with schema `dsgrow.approval.v1` (so does `deny.yml`, which
     records a denial and changes no infrastructure). The `vcfops` rules run only `propose.yml` and `cleared.yml`.
-    Every field of an event must match the rulebook's allow-list first: Ansible renders event strings as templates.
+    Every field of an event that a playbook reads must pass the rulebook's allow-list first (Ansible renders event
+    strings as templates); the tests find the fields by reading the playbooks.
 
 Never approve on the owner's behalf. Never touch a request or the lock while an expansion is in flight.
 

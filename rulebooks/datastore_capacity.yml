@@ -9,15 +9,20 @@
 #
 # EVENT STRINGS ARE TEMPLATES. ansible-rulebook writes the matched event to the playbook's extra vars, and ansible-core
 # renders extra-vars strings as Jinja when a playbook reads them: a resource_name of "{{ lookup('pipe', ...) }}" would
-# run inside this container, which holds every credential. So no playbook starts unless EVERY field of the event
-# matches an anchored allow-list below. The patterns are plain character classes (no backslash, lookaround or doubled
-# brace), so they mean the same to the rulebook engine's Java matcher and to Python. The identifiers a playbook acts on
-# (alert_id, resource_id, resource_name, adapter_instance) have strict character sets; every other field is text
-# (status, criticality, times, symptoms, link) and only excludes braces and a leading "#" (a "#jinja2:" header), so
-# a real value VCF Operations formats in an unexpected way cannot drop an alert. A new payload field needs a
-# pattern in every rule that reads the event: tests/unit/test_rulebook_allowlist.py fails until it has one. An event
-# that fails a pattern falls through to the last rule and is only logged. The playbooks' own re-checks
-# (roles/dsgrow_resolve/tasks/alert_input.yml) run AFTER the rendering and are not a guard.
+# run inside this container, which holds every credential. So no playbook starts unless every field IT READS matches
+# an allow-list below: the identifiers that pick the datastore (alert_id, resource_id, resource_name, adapter_instance)
+# have strict character sets; the text a playbook shows in Slack (criticality, cancel_time, link) only has to be free of
+# a Jinja opener ("{{", "{%", "{#") and of a leading "#" (a "#jinja2:" header): a lone brace, an unresolved
+# ${PLACEHOLDER} or a link that is not a URL is real data, not an attack. The fields no playbook reads (status,
+# adapter_kind, the times, symptoms), meta.headers and any extra key have no pattern, so they can never drop an alert:
+# they stay inert because ansible-core 2.21 renders an item of the event only when it is read, and
+# tests/unit/test_security_settings.py forbids rendering an event as a whole (tests/offline/test_flow.py proves it on
+# the real playbooks). A playbook that starts reading a new field needs a pattern for it here:
+# tests/unit/test_rulebook_allowlist.py finds every field the playbooks read and fails until it has one. The patterns
+# are plain character classes (no backslash, lookaround or doubled brace), so the rulebook engine's Java matcher and
+# Python read them alike. An event that fails a pattern falls through to the "Rejected alert" rule below and is
+# logged with the values it saw. The playbooks' own re-checks (roles/dsgrow_resolve/tasks/alert_input.yml) run AFTER
+# the rendering and are not a guard.
 - name: dsgrow datastore capacity
   hosts: all
   execution_strategy: sequential        # one playbook at a time: no two approvals race on the same request
@@ -46,19 +51,14 @@
         and event.payload.resource_kind == "Datastore"
         and event.payload.alert_definition in vars.dsgrow_alert_definitions
         and event.payload.alert_id is defined
-        and event.payload.alert_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
-        and event.payload.resource_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
+        and event.payload.alert_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
+        and event.payload.resource_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
         and event.payload.resource_name is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
         and (event.payload.adapter_instance is not defined
              or event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$"))
-        and event.payload.status is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.criticality is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.adapter_kind is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.create_time is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.update_time is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.cancel_time is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.symptoms is match("^([^{}#][^{}]{0,4094})?$")
-        and event.payload.link is match("^(https?://[^{}<>| ]{1,500})?$")
+        and event.payload.criticality is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
+        and event.payload.cancel_time is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
+        and event.payload.link is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
       # Per ALERT, not per datastore (owner 2026-11-21: "alert the admin every time the datastore passes the critical
       # limit"): every crossing is a new VCF Ops alert with its own id and gets a proposal; the "updated" events of the
       # same alert stay throttled. Overlap is refused by propose.yml (one request in flight per datastore, the lock).
@@ -80,19 +80,14 @@
         and event.payload.resource_kind == "Datastore"
         and event.payload.alert_definition in vars.dsgrow_alert_definitions
         and event.payload.alert_id is defined
-        and event.payload.alert_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
-        and event.payload.resource_id is match("^[0-9A-Za-z][0-9A-Za-z-]{7,63}$")
+        and event.payload.alert_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
+        and event.payload.resource_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
         and event.payload.resource_name is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
         and (event.payload.adapter_instance is not defined
              or event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$"))
-        and event.payload.status is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.criticality is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.adapter_kind is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.create_time is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.update_time is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.cancel_time is match("^([^{}#][^{}]{0,254})?$")
-        and event.payload.symptoms is match("^([^{}#][^{}]{0,4094})?$")
-        and event.payload.link is match("^(https?://[^{}<>| ]{1,500})?$")
+        and event.payload.criticality is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
+        and event.payload.cancel_time is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
+        and event.payload.link is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
       action:
         run_playbook:
           name: playbooks/cleared.yml
@@ -146,9 +141,14 @@
       action:
         debug:
           msg: >-
-            dsgrow REJECTED a vcfops event ({{ event.payload.event | default('?') }}, resource
-            {{ event.payload.resource_name | default('?') | string | truncate(80) }}): a field is outside the allow-list
-            in rulebooks/datastore_capacity.yml, no playbook was started
+            dsgrow REJECTED a vcfops event ({{ event.payload.event | default('?') }}):
+            alert_id={{ event.payload.alert_id | default('?') | string | truncate(60) }}
+            resource_id={{ event.payload.resource_id | default('?') | string | truncate(60) }}
+            resource_name={{ event.payload.resource_name | default('?') | string | truncate(60) }}
+            criticality={{ event.payload.criticality | default('?') | string | truncate(40) }}
+            cancel_time={{ event.payload.cancel_time | default('?') | string | truncate(40) }}
+            link={{ event.payload.link | default('?') | string | truncate(80) }}
+            - one of these is outside the allow-list in rulebooks/datastore_capacity.yml, no playbook was started
 
     - name: Ignore and log everything else
       condition: event.meta is defined

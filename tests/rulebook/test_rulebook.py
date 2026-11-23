@@ -29,8 +29,9 @@ PORTS = {"vcfops": 5080, "approvals": 5081}
 # ansible renders event strings as Jinja templates when a playbook reads them, so a string like this one in ANY field of
 # an event must keep every playbook from starting (the rulebook's allow-lists; tests/unit/test_rulebook_allowlist.py)
 INJECTION = "{{ 7 * 7 }}"
-ALERT_FIELDS = ["alert_id", "resource_id", "resource_name", "status", "criticality", "adapter_kind", "create_time",
-                "update_time", "cancel_time", "symptoms", "link", "adapter_instance"]
+ALERT_FIELDS = ["alert_id", "resource_id", "resource_name", "criticality", "cancel_time", "link", "adapter_instance"]
+# fields no playbook reads: no pattern, so even template text in them stops nothing (it stays inert: tests/offline/test_flow.py)
+UNREAD_FIELDS = ["status", "adapter_kind", "create_time", "update_time", "symptoms"]
 APPROVAL_FIELDS = ["rid", "vc", "ds", "dev", "approver_id", "approver_name", "channel", "ts", "tgt"]
 DENY_FIELDS = [f for f in APPROVAL_FIELDS if f != "tgt"]
 
@@ -156,6 +157,14 @@ def test_rulebook_routes_events(rulebook):
             hostile[field] = INJECTION
             assert _post(vc, hostile, VCFOPS_TOKEN) == 200, (event, field)
             time.sleep(0.3)
+    # a real-looking alert with odd values in the text fields and template text only where nothing reads it IS proposed:
+    # an allow-list that drops real alerts is worse than none
+    odd = dict(_fixture("new_datastore_80.json"), alert_id="a1b2c3d4-0008-4000-8000-000000000008",
+               resource_id="4d4d4d4d-8888-4c3b-9a71-0d5f2e6b7a08", resource_name="ds-odd08", criticality="${CRITICALITY}",
+               cancel_time="${CANCEL_TIME}", link="N/A", sent_at=INJECTION, extra_key=INJECTION,
+               **{f: INJECTION for f in UNREAD_FIELDS})
+    assert _post(vc, odd, VCFOPS_TOKEN) == 200
+    time.sleep(1)
     # ... and in the URL path the sender chose (meta.endpoint travels in the event too)
     assert _post(vc, dict(_fixture("new_datastore_80.json"), alert_id="a1b2c3d4-0098-4000-8000-000000000098",
                           resource_id="7e7e7e7e-0098-4c3b-9a71-000000000098"),
@@ -194,13 +203,13 @@ def test_rulebook_routes_events(rulebook):
     assert _post(ap, body, VCFOPS_TOKEN, signature=_sign(body)) == 401
     assert _post(vc, _fixture("approvals/deny.json"), VCFOPS_TOKEN) == 200   # a denial sent to vcfops: ignored
 
-    calls = _calls(rulebook["calls"], expect=7)
+    calls = _calls(rulebook["calls"], expect=8)
     # first of all: an event with template text in a field must not have started anything (before this check the
     # stubs of an unprotected rulebook recorded 49 for "{{ 7 * 7 }}": the engine rendered it)
     rendered = [c for c in calls if any(not isinstance(v, str) for v in c.values())
                 or any("{{" in str(v) or str(v) == "49" for v in c.values())]
     assert not rendered, "template text in an event reached a playbook and was rendered: %s" % rendered
-    assert len(calls) == 7, "an event with template text started a playbook (%d calls): %s" % (len(calls), calls)
+    assert len(calls) == 8, "an event with template text started a playbook (%d calls): %s" % (len(calls), calls)
     # ... and the log says so for each of them (a dropped alert is never silent): 2 x 12 fields, the path, no_alert_id
     time.sleep(2)
     log_text = pathlib.Path(rulebook["log"]).read_text(encoding="utf-8", errors="replace")
@@ -216,7 +225,7 @@ def test_rulebook_routes_events(rulebook):
     got = sorted((c["resource_id"], c["alert_id"]) for c in by.get("propose", []))
     want = sorted([(_fixture(n)["resource_id"], _fixture(n)["alert_id"])
                    for n in ["new_datastore_80.json", "symptoms_na.json", "new_datastore_again.json"]]
-                  + [(with_adapter["resource_id"], with_adapter["alert_id"])])
+                  + [(with_adapter["resource_id"], with_adapter["alert_id"]), (odd["resource_id"], odd["alert_id"])])
     assert got == want, got
     assert all(c["source"] == "vcfops" for c in by["propose"])
     # cleared once
@@ -228,5 +237,5 @@ def test_rulebook_routes_events(rulebook):
     # deny exactly once, from the approvals source only (never the denial sent to vcfops)
     assert len(by.get("deny", [])) == 1
     assert by["deny"][0]["source"] == "approvals" and by["deny"][0]["resource_id"] == _fixture("approvals/deny.json")["rid"]
-    # 4 propose + 1 cleared + 1 execute + 1 deny: nothing for any event with template text
-    assert len(calls) == 7, calls
+    # 5 propose + 1 cleared + 1 execute + 1 deny: nothing for any event with template text in a field a playbook reads
+    assert len(calls) == 8, calls
