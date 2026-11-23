@@ -749,3 +749,8 @@ steps, each with the owner's go-ahead ("go ahead with steps 1 and 2", "step 3", 
   Read-back: datastore and volume absent, both locks released, nothing in flight; the denied request is kept as the
   record (cleanup closes only proposed, executing and failed requests: 12 done, 1 denied, 1 cleared). The lab is back to
   its clean initial state.
+- Dry run of setup/vcfops.yml (owner: "run the setup/vcfops.yml dry run", forced --check --diff,
+  `vcfops-20261123T233741Z-check.log`, 23:37 UTC): ok=27 changed=0 failed=0; VCF Operations was only read. The new task
+  "An existing outbound instance points where the inventory says" ran (not skipped) and passed: the webhook instance
+  VCF Operations holds has the Url the inventory names (scheme, host, port), so the comparison is tolerant enough for
+  the lab's real value and a later change of scheme or host will now be flagged instead of reporting changed=0.
