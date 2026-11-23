@@ -13,6 +13,13 @@ the ESXi hosts, expands the VMFS and reports back in the same Slack thread.
 It does one thing: grow a datastore. Shrinking, creating, deleting and migrating datastores are out of scope.
 "Auto" means the work after the decision: nothing grows without an approver's click.
 
+**Status: a demo.** It was built and run on one lab (VCF 9.1, FlashArrays over NVMe/TCP), not in production. It is
+careful about *what* it changes (the safety rules and the tests behind them), but it is not hardened as a network
+service: the `vcfops` webhook (port 5080) is plain HTTP behind a bearer token, **nothing in this repository sets up a
+firewall** (a demo does not need one), and the FlashArray connection is not certificate-checked. Volumes presented over
+SCSI are handled by the code but have never been run on a lab. The details are in [Security notes](#security-notes):
+read them before you run this anywhere that matters.
+
 Inside the code the project is called `dsgrow`: the variable and role prefix, the event schemas
 (`dsgrow.vcfops.v1`, `dsgrow.approval.v1`), the containers and the names of the objects it creates.
 
@@ -44,8 +51,7 @@ against live data. A forged or replayed event can't grow anything.
 
 The rulebook also starts no playbook for an event with an unexpected field: ansible renders event strings as templates
 when a playbook reads them, so every field of an alert or an approval must match an anchored allow-list in the rulebook
-first (`rulebooks/datastore_capacity.yml`). The `vcfops` webhook is still plain HTTP behind a bearer token: keep port 5080
-reachable from VCF Operations only.
+first (`rulebooks/datastore_capacity.yml`). The `vcfops` webhook is plain HTTP behind a bearer token (see Security notes).
 
 ## Safety model
 
@@ -74,12 +80,14 @@ What a deployment still has to take care of, and what the code does about the re
   opener". Fields nothing reads have no pattern, so an unexpected value there never drops an alert (they stay inert; a
   test runs the real playbooks to prove it). A rejected alert is logged as `dsgrow REJECTED` with the values it saw. The
   bridge cleans the approver's name the same way.
-- **The `vcfops` webhook is plain HTTP behind a bearer token.** Whoever has the token can post a forged alert (a real
-  proposal with working buttons) or cancel a pending one. Firewall port 5080 to the VCF Operations nodes, set
-  `DSGROW_EDA_VCFOPS_BIND` in the run host's own `.env` (not a synced file) to the address on their network, and prefer
-  a TLS proxy on the run host
-  (bind the source to `127.0.0.1`, set `dsgrow_eda_vcfops_scheme: https` in the inventory, import the proxy's certificate
-  into VCF Operations). The `approvals` source is loopback only, with its own token and an HMAC.
+- **The `vcfops` webhook (port 5080) is plain HTTP behind a bearer token, and nothing here sets up a firewall.** This is a
+  demo, and a demo does not need one; it is stated here so that nobody assumes otherwise. Whoever can reach the port
+  and has the token can post a forged alert (a proposal that an approver must still click: nothing grows without the
+  click) or cancel a pending one; the `approvals` source, which starts the expansion, is loopback only, with its own
+  token and an HMAC. Beyond a demo: allow port 5080 only from the VCF Operations nodes, set `DSGROW_EDA_VCFOPS_BIND` in
+  the run host's own `.env` (not a synced file) to the address on their network, and prefer a TLS proxy on the run host
+  (bind the source to `127.0.0.1`, set `dsgrow_eda_vcfops_scheme: https` in the inventory, import the proxy's
+  certificate into VCF Operations).
 - **FlashArray TLS is not verified.** The `everpure.flasharray` 1.46.0 modules (every runtime FlashArray call) have no
   option to verify the array's certificate, whatever `validate_certs` says in `flasharrays.yml` (that key and
   `api_version` are read only by the REST probes). A host on the path to the management address could read the API
@@ -169,7 +177,7 @@ What the environment must provide. The reference lab (environment `vcf9-1`, VCF 
   devices) or SCSI (`naa.624a9370…`), not in pods. An admin API token for `setup/fa_user.yml`, which creates the
   `dsgrow` `storage_admin` user.
 - **A Linux run host** with Docker and Compose, about 2 GB of disk for the images. VCF Operations must reach it on
-  TCP 5080 (the webhook); it must reach vCenter, the arrays and VCF Operations on HTTPS, and Slack outbound (Socket
+  TCP 5080 (the webhook, plain HTTP); it must reach vCenter, the arrays and VCF Operations on HTTPS, and Slack outbound (Socket
   Mode needs no inbound access).
 - **A Slack workspace** where you can install an app (`slack/manifest.yml`), a channel for the proposals, and the
   member IDs of the approvers.

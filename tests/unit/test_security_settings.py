@@ -112,10 +112,19 @@ def test_no_playbook_renders_an_event_as_a_whole():
     assert not bad, "an event rendered as a whole: %s" % bad
 
 
+def test_the_readme_says_up_front_that_it_is_a_demo_without_a_firewall():
+    """A reader who stops after the introduction still learns that this is a demo and that no firewall is set up."""
+    head = "\n".join((ROOT / "README.md").read_text(encoding="utf-8").splitlines()[:30])
+    assert "**Status: a demo.**" in head
+    assert "nothing in this repository sets up a firewall" in " ".join(head.replace("**", "").split())
+    assert "(#security-notes)" in head, "the status must point to the Security notes"
+
+
 def test_the_readme_states_the_limits_it_has():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "## Security notes" in readme
     section = readme.split("## Security notes", 1)[1].split("\n## ", 1)[0]
-    for needle in ("plain HTTP", "DSGROW_EDA_VCFOPS_BIND", "FlashArray TLS is not verified", "Host.Config.Storage",
+    for needle in ("plain HTTP", "nothing here sets up a firewall", "a demo does not need one", "DSGROW_EDA_VCFOPS_BIND",
+                   "FlashArray TLS is not verified", "Host.Config.Storage",
                    "dsgrow_alert_min_used_pct", "SYNC_FORCE", "templates"):
         assert needle in section, "README 'Security notes' must mention %r" % needle
