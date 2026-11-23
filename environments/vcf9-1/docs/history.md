@@ -732,3 +732,6 @@ steps, each with the owner's go-ahead ("go ahead with steps 1 and 2", "step 3", 
   and a real FlashArray grow and vCenter expand through the read-only, capability-free rulebook container.
 - Not proven live yet: a Deny (covered offline and by the real-engine rulebook test) and setup/vcfops.yml's check of the
   stored webhook URL (its next dry run). The demo is left initialized and expanded to 256 GiB.
+- Cleanup (owner: "now clean up the environment", `cleanup-20261123T230507Z.log`, 23:05 UTC, no dry run: unchanged since
+  the 22:49 run): ok=63 changed=11 failed=0, 1 min 53 s. Read-back: datastore and volume absent, lock released. The lab is
+  back to its clean initial state.
