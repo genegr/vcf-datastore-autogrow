@@ -1,0 +1,35 @@
+---
+# READ-ONLY probe: can the dsgrow vCenter account (SSO user, least privilege; .state/secrets) still log in on every
+# vCenter in dsgrow_vcenters? vCenter's default SSO policy expires such a password (90 days in the versions documented up
+# to vSphere 8.0; check yours): after that every proposal and approval fails at its first vCenter read, and
+# setup/vcenter_account.yml does not touch an existing user. Run it now and then, or after a vCenter upgrade.
+#   bash tools/probe.sh tests/probes/vc_login.yml
+- name: Dsgrow vCenter logins, read-only
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - /work/playbooks/group_vars/all/dsgrow.yml
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/site.yml"
+    - "/work/environments/{{ dsgrow_env }}/inventory/group_vars/dsgrow/vcenters.yml"
+  tasks:
+    - name: The dsgrow secrets
+      ansible.builtin.include_tasks: /work/setup/tasks/secrets_load.yml
+
+    - name: Log in as the dsgrow account (the module masks the password)
+      community.vmware.vmware_about_info:
+        hostname: "{{ dsgrow_vc.hostname }}"
+        username: "{{ dsgrow_vc.username }}"
+        password: "{{ dsgrow_vc_password }}"
+        validate_certs: "{{ dsgrow_vc.validate_certs | default(true) | bool }}"
+      loop: "{{ dsgrow_vcenters }}"
+      loop_control:
+        loop_var: dsgrow_vc
+        label: "{{ dsgrow_vc.hostname }}"
+      register: vl_about
+
+    - name: Result
+      ansible.builtin.debug:
+        msg: "{{ item.dsgrow_vc.hostname }}: {{ item.about_info.product_name | default('?') }} {{ item.about_info.product_version | default('?') }}, login ok as {{ item.dsgrow_vc.username }}"
+      loop: "{{ vl_about.results }}"
+      loop_control:
+        label: "{{ item.dsgrow_vc.hostname }}"

@@ -21,7 +21,7 @@
         body_format: json
         body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
       register: pr_tok
       no_log: true
 
@@ -31,7 +31,7 @@
           ansible.builtin.uri:
             url: "{{ pr_api }}/resources?adapterKind=VMWARE&resourceKind=Datastore&name={{ pr_ds | urlencode }}"
             headers: &pr_h {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: pr_res
           no_log: true
 
@@ -39,7 +39,7 @@
           ansible.builtin.uri:
             url: "{{ pr_api }}/alerts?resourceId={{ pr_res.json.resourceList[0].identifier }}&pageSize=50"
             headers: *pr_h
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: pr_alerts
           no_log: true
 
@@ -47,7 +47,7 @@
           ansible.builtin.uri:
             url: "{{ pr_api }}/symptoms?resourceId={{ pr_res.json.resourceList[0].identifier }}&activeOnly=true"
             headers: *pr_h
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 400, 404]
           register: pr_sym
           no_log: true
@@ -56,7 +56,7 @@
           ansible.builtin.uri:
             url: "{{ pr_api }}/resources/{{ pr_res.json.resourceList[0].identifier }}/policies"
             headers: *pr_h
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 400, 404]
           register: pr_pol
           no_log: true
@@ -65,7 +65,7 @@
           ansible.builtin.uri:
             url: "{{ pr_api }}/policies"
             headers: *pr_h
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: pr_pols
           no_log: true
 
@@ -75,7 +75,7 @@
             url: "{{ pr_api }}/auth/token/release"
             method: POST
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 204]
           when: pr_tok.json.token is defined
           no_log: true

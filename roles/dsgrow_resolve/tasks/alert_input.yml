@@ -2,7 +2,8 @@
 # In: dsgrow_alert (the VCF Ops payload, schema dsgrow.vcfops.v1).
 # Out: dsgrow_datastore_name, dsgrow_vc_candidates (the vCenter adapter_instance names, else every configured one;
 #      pick_vcenter.yml then keeps the one that has the datastore).
-# Only identifiers are taken from the payload (rule 4); the rulebook already filtered, this re-checks.
+# Only identifiers are taken from the payload (rule 4). The rulebook's allow-lists are the guard (an event string is
+# rendered as a template when it is read, so nothing checked here can keep a template out); this re-checks.
 - name: The payload is a dsgrow.vcfops.v1 datastore alert
   ansible.builtin.assert:
     that:

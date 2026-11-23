@@ -13,3 +13,24 @@ vault_ids=()
 [[ -n ${DSGROW_LAB_VAULT_PASS:-} ]] && vault_ids+=(--vault-id "lab@$DSGROW_LAB_VAULT_PASS")
 [[ -s .state/vault-pass ]] && vault_ids+=(--vault-id dsgrow@/work/.state/vault-pass)
 env_vars=(-e "dsgrow_env=$DSGROW_ENV")
+
+# The only ansible-playbook options probe.sh and setup.sh pass through. None of them can name another playbook, an
+# inventory, a connection or a vault file, so the path allow-list and the per-file --confirm gate cannot be bypassed
+# by an extra argument ("bash tools/probe.sh tests/probes/x.yml setup/vcfops.yml" would run both).
+dsgrow_check_args() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -v|-vv|-vvv|-vvvv|--diff) shift ;;
+      -e|--extra-vars)
+        # only dsgrow's own variables (dsgrow_*, a probe's pr_*, the demo's dd_*): never ansible_* (connection, host,
+        # interpreter, become), never @file or JSON
+        [[ ${2-} =~ ^(dsgrow|pr|dd)_[A-Za-z0-9_]*=[A-Za-z0-9_.,:/+-]*$ ]] \
+          || { echo "refused: $1 ${2-} (only -e dsgrow_*=value, pr_*=value or dd_*=value)" >&2; return 2; }
+        shift 2 ;;
+      -t|--tags|--skip-tags)
+        [[ ${2-} =~ ^[A-Za-z0-9_,-]+$ ]] || { echo "refused: $1 ${2-}" >&2; return 2; }
+        shift 2 ;;
+      *) echo "refused argument: $1 (passed through: -v, --diff, -e name=value, --tags, --skip-tags)" >&2; return 2 ;;
+    esac
+  done
+}

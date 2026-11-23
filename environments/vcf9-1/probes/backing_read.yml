@@ -25,7 +25,7 @@
         hostname: "{{ pr_vc.hostname }}"
         username: "administrator@{{ pr_vc.username.split('@')[1] }}"
         password: "{{ dsgrow_lab_vc_admin_password }}"
-        validate_certs: false
+        validate_certs: "{{ pr_vc.validate_certs | default(true) | bool }}"
         datacenter: "{{ pr_vc.datacenter }}"
         datastore: "{{ item.1 }}"
         query_expand: true
@@ -43,7 +43,7 @@
         hostname: esx04.vcf9-1.lab
         username: root
         password: "{{ vault_esx_root_password }}"
-        validate_certs: false
+        validate_certs: "{{ pr_vc.validate_certs | default(true) | bool }}"
         datastore: vcf9-1-w01-ds01
         query_expand: true
       register: pr_direct

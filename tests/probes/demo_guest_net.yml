@@ -19,7 +19,7 @@
       hostname: "{{ dd_vc.hostname }}"
       username: "{{ dd_admin }}"
       password: "{{ dsgrow_lab_vc_admin_password }}"
-      validate_certs: false
+      validate_certs: "{{ dd_vc.validate_certs | default(true) | bool }}"
   tasks:
     - name: The VM as vCenter sees it
       community.vmware.vmware_guest_info:
@@ -53,7 +53,7 @@
         hostname: "{{ dd_vc.hostname }}"
         username: "{{ dd_admin }}"
         password: "{{ dsgrow_lab_vc_admin_password }}"
-        validate_certs: false
+        validate_certs: "{{ dd_vc.validate_certs | default(true) | bool }}"
         datacenter: "{{ dd_vc.datacenter }}"
         datastore: "{{ dd.datastore }}"
         path: "{{ dd_seed_iso }}"

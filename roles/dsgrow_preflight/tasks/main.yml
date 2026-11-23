@@ -23,6 +23,15 @@
       {{ 'destroyed' if dsgrow_fa_match.volume.destroyed | default(false) else 'in a pod (out of scope)' }}
     quiet: true
 
+- name: Propose - the datastore is as full as the alert says
+  ansible.builtin.assert:
+    that: dsgrow_used_pct | float >= dsgrow_alert_min_used_pct | float
+    fail_msg: >-
+      {{ dsgrow_datastore_name }} is {{ dsgrow_used_pct }}% full, below the {{ dsgrow_alert_min_used_pct }}% an alert
+      needs: the alert may name another datastore of the same name (one outside the configured vCenters). Nothing proposed.
+    quiet: true
+  when: dsgrow_preflight_mode == 'propose'
+
 - name: Propose - size options
   ansible.builtin.set_fact:
     dsgrow_options: >-

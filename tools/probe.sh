@@ -6,8 +6,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 probe=${1:?usage: tools/probe.sh tests/probes/<probe>.yml|environments/<env>/probes/<probe>.yml [args]}; shift
-case "$probe" in tests/probes/*.yml|environments/*/probes/*.yml) ;; *) echo "only tests/probes/ or environments/<env>/probes/" >&2; exit 2 ;; esac
+# Exactly <dir>/<name>.yml, one level, no "..": a glob like tests/probes/*.yml also matches tests/probes/../../setup/x.yml
+name='[A-Za-z0-9_][A-Za-z0-9_.-]*\.yml'
+[[ $probe =~ ^tests/probes/$name$ || $probe =~ ^environments/[A-Za-z0-9_][A-Za-z0-9_-]*/probes/$name$ ]] \
+  || { echo "only tests/probes/<name>.yml or environments/<env>/probes/<name>.yml" >&2; exit 2; }
+[[ -f $probe && ! -L $probe ]] || { echo "no such probe file (or a symlink): $probe" >&2; exit 2; }
 source tools/env.sh
+dsgrow_check_args "$@" || exit 2
 mkdir -p .state/probes .state/home
 exec docker run --rm --network host --user "$(id -u):$(id -g)" \
   -v "$PWD:/work" ${lab_mount[@]+"${lab_mount[@]}"} -w /work \

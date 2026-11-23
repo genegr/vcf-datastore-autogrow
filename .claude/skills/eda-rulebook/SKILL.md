@@ -12,12 +12,14 @@ The rulebook is the visible hub of the demo (owner 2026-11-19). It never changes
 | propose | `vcfops` | `playbooks/propose.yml` | no (Slack + request file) |
 | cleared | `vcfops` | `playbooks/cleared.yml` | no (Slack) |
 | approved | `approvals` | `playbooks/execute.yml` | **yes**, the only writer |
+| denied | `approvals` | `playbooks/deny.yml` | request file only (status `denied`, who, when); no infrastructure |
 
 Pins: ansible-rulebook 1.3.2, `ansible.eda` 2.13.0 (`docker/`).
 
 ## Sources
 
-- `vcfops`: `ansible.eda.webhook` on `0.0.0.0:5080`, token. (Port 5000 belongs to another project on the run host.)
+- `vcfops`: `ansible.eda.webhook` on `DSGROW_EDA_VCFOPS_BIND` (the run host's `.env` through compose.yaml, default
+  `0.0.0.0`; never a tracked file, sync would overwrite it):5080, token, plain HTTP. (Port 5000 belongs to another project on the run host.)
 - `approvals`: `127.0.0.1:5081`, its own token plus `hmac_secret`, `hmac_header: x-dsgrow-signature`, hex. Only
   the bridge holds the secret.
 - Secrets arrive as env vars from `.state/eda.env` (compose `env_file`).
@@ -31,6 +33,20 @@ Pins: ansible-rulebook 1.3.2, `ansible.eda` 2.13.0 (`docker/`).
   propose's per-datastore lock.
 - cleared: source `vcfops`, same schema and kind, `event == "canceled"`.
 - approved: `event.meta.source.name == "approvals"`, `schema == "dsgrow.approval.v1"`, `decision == "approve"`.
+- denied: the same source and schema, `decision == "deny"` (the bridge sends one for every Deny click: a deny must not live
+  only in the bridge's memory, or a Custom form opened before it could still approve).
+- **Every field is on an allow-list.** ansible-core renders the strings of an event (they reach the playbook as extra
+  vars) as Jinja when a playbook reads them, so `{{ lookup('pipe', ...) }}` in a `resource_name` would run in the
+  container that holds every credential. Each playbook rule therefore carries an anchored `is match("^...$")` for every
+  payload field (and `meta.endpoint`, the sender's URL path); `adapter_instance` is optional
+  (`is not defined or is match`). Equality or `in` covers schema, event, kind and alert definition. A condition that
+  fails falls through to the catch-all, which only logs. Pattern rules: plain classes, no backslash, lookaround or
+  doubled brace (rulebook engine = Java matcher, `{{` in a string is rendered by ansible-rulebook itself); free-text
+  fields no playbook acts on only exclude braces and a leading `#`. The playbooks' own regexes run after the rendering
+  and guard nothing. A new payload field needs a pattern in every rule that reads the event, in the same change as the
+  fixture, template and bridge (`tests/unit/test_rulebook_allowlist.py` fails until it has one).
+- The bridge signs only what the approvals rule accepts: `approver_name` goes through `validate.clean_name`
+  (`[A-Za-z0-9 ._()@-]`, 80 characters, anything else `_`).
 - A catch-all debug rule last (rules are first-match). An unmatched event is ignored, never an error.
 
 ## Facts (ansible.eda + ansible-rulebook source)
@@ -48,6 +64,13 @@ Pins: ansible-rulebook 1.3.2, `ansible.eda` 2.13.0 (`docker/`).
 
 - The `vcfops` source never reaches `execute.yml` (CLAUDE.md rule 11).
 - Every new condition gets a fixture that matches and one that must not.
+- NOT covered by a pattern: `meta.headers` (the sender's request headers, minus Authorization), `payload.sent_at` and any
+  extra key of a payload. They reach the playbook in the event. ansible-core 2.21.4 (read in its `_lazy_containers.py`) renders a value of the event when that
+  item is read, but a whole-container operation (`to_json`, `str()`, `combine`, a loop over the values, `debug var=`)
+  renders every value in it. That is why EVERY known payload field has a pattern, and why no task may dump, print or loop
+  over `ansible_eda.event`, `.meta` or `.meta.headers` (nor `dsgrow_alert`, `dsgrow_approval`, `dsgrow_denial`) as a
+  whole: `tests/unit/test_security_settings.py::test_no_playbook_renders_an_event_as_a_whole` enforces it. Keep
+  ansible-core pinned (docker/requirements.txt).
 
 ## Test (offline, no real systems)
 
@@ -59,4 +82,8 @@ schema or an approval sent to `vcfops`; cleared once; execute once, from `approv
 ```bash
 docker run --rm --network none -v "$PWD:/work" -w /work dsgrow-eda:1 python -m pytest -q -p no:cacheprovider tests/rulebook
 ```
+`tools/offline.sh` runs it under the rulebook service's own settings (code read-only, `.state` hidden, no capability) and
+then `tools/flow_tests.sh`: the real propose / execute / deny / cleared playbooks against a fake FlashArray, vCenter and
+Slack (`tests/offline/test_flow.py`). Template text in every alert and approval field is posted to the real rulebook by `tests/rulebook/` and checked against
+the patterns by `tests/unit/test_rulebook_allowlist.py`; the flow tests cover the lifecycle, not the injection.
 (`--network none`: 5080/5081 are live on the run host.)

@@ -37,7 +37,7 @@
         body_format: json
         body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
       register: pr_tok
       no_log: true
 
@@ -47,7 +47,7 @@
           ansible.builtin.uri:
             url: "{{ pr_base }}/suite-api/api/alertplugins/types/WebhookPlugin"
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             return_content: true
           register: pr_type
           no_log: true
@@ -56,7 +56,7 @@
           ansible.builtin.uri:
             url: "{{ pr_base }}{{ item }}"
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}"}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             return_content: true
             status_code: [200, 301, 302, 401, 403, 404]
             follow_redirects: safe
@@ -70,7 +70,7 @@
             url: "{{ pr_base }}/suite-api/api/auth/token/release"
             method: POST
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 204]
           when: pr_tok.json.token is defined
           no_log: true

@@ -259,13 +259,16 @@ def test_approvals_source_is_loopback_with_token_and_hmac():
 def test_execute_only_from_approvals():
     rules = _rulebook()["rules"]
     runs = [(r, r["action"]["run_playbook"]["name"]) for r in rules if "run_playbook" in r.get("action", {})]
-    assert {name for _, name in runs} == {"playbooks/propose.yml", "playbooks/cleared.yml", "playbooks/execute.yml"}
+    assert {name for _, name in runs} == {"playbooks/propose.yml", "playbooks/cleared.yml", "playbooks/execute.yml",
+                                          "playbooks/deny.yml"}
     for rule, name in runs:
         cond = " ".join(rule["condition"].split())
-        if name == "playbooks/execute.yml":
+        if name in ("playbooks/execute.yml", "playbooks/deny.yml"):
             assert 'event.meta.source.name == "approvals"' in cond
             assert 'event.payload.schema == "dsgrow.approval.v1"' in cond
             assert not rule["action"]["run_playbook"].get("retry"), "a write is never retried automatically"
+            decision = "approve" if name.endswith("execute.yml") else "deny"
+            assert 'event.payload.decision == "%s"' % decision in cond
         else:
             assert 'event.meta.source.name == "vcfops"' in cond
             assert 'event.payload.schema == "dsgrow.vcfops.v1"' in cond

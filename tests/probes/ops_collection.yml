@@ -36,7 +36,7 @@
         body_format: json
         body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
       register: pr_tok
       no_log: true
 
@@ -46,7 +46,7 @@
           ansible.builtin.uri:
             url: "{{ pr_ops }}/api/adapters?adapterKindKey=VMWARE"
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: pr_adapters
           no_log: true
 
@@ -54,7 +54,7 @@
           ansible.builtin.uri:
             url: "{{ pr_ops }}/api/adapters/{{ item.id }}"
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           loop: "{{ pr_adapters.json.adapterInstancesInfoDto | default([]) }}"
           loop_control:
             label: "{{ item.resourceKey.name }}"
@@ -65,7 +65,7 @@
           ansible.builtin.uri:
             url: "{{ pr_ops }}/api/resources?adapterKind=VMWARE&resourceKind=Datastore&name={{ item | urlencode }}"
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           loop: "{{ pr_datastores }}"
           register: pr_ds
           no_log: true
@@ -76,7 +76,7 @@
               {{ pr_ops }}/api/resources/{{ item.identifier }}/stats?{{ pr_stat_keys | map('urlencode')
                  | map('regex_replace', '^', 'statKey=') | join('&') }}&begin={{ pr_begin_ms }}&end={{ pr_end_ms }}&rollUpType=MAX&intervalType=MINUTES&intervalQuantifier=1
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 400, 404, 500]
           loop: "{{ pr_ds.results | map(attribute='json') | map(attribute='resourceList') | flatten }}"
           loop_control:
@@ -90,7 +90,7 @@
             url: "{{ pr_ops }}/api/auth/token/release"
             method: POST
             headers: {Authorization: "OpsToken {{ pr_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 204]
           when: pr_tok.json.token is defined
           no_log: true

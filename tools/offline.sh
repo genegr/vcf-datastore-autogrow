@@ -6,7 +6,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 IMAGE=${DSGROW_IMAGE:-dsgrow-eda:1}
 mkdir -p .state/offline
-docker run --rm --network none --user "$(id -u):$(id -g)" -v "$PWD:/work:ro" \
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+  --user "$(id -u):$(id -g)" -v "$PWD:/work:ro" \
   -v "$PWD/.state/offline:/tmp/dsgrow-offline" -w /work \
   -e HOME=/tmp -e ANSIBLE_CONFIG=/work/ansible.cfg -e ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \
   -e DSGROW_STATE_DIR=/tmp/dsgrow-offline -e ANSIBLE_STDOUT_CALLBACK=default -e ANSIBLE_CALLBACK_RESULT_FORMAT=yaml \
@@ -18,5 +19,14 @@ docker run --rm --network none --user "$(id -u):$(id -g)" -v "$PWD:/work:ro" \
     done
     echo "syntax: ok"
     ansible-playbook -i localhost, -c local tests/offline/logic.yml
-    if python3 -c "import pytest" 2>/dev/null; then python3 -m pytest -q -p no:cacheprovider tests/offline; \
-    else echo "(pytest not in this image: tests/offline/test_proposal.py skipped)"; fi'
+    if python3 -c "import pytest" 2>/dev/null; then python3 -m pytest -q -p no:cacheprovider --ignore=tests/offline/test_flow.py tests/offline tests/unit bridge/tests; \
+    else echo "(pytest not in this image: the Python tests are skipped)"; fi'
+
+# The real rulebook against the fixtures (hostile events included), under the settings the rulebook SERVICE runs with
+# (compose.yaml): the checkout read-only, .state hidden behind a tmpfs, no capability, no network.
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+  --user "$(id -u):$(id -g)" -v "$PWD:/work:ro" --tmpfs /work/.state -e HOME=/tmp -w /work \
+  "$IMAGE" python3 -m pytest -q -p no:cacheprovider tests/rulebook
+
+# The real propose / execute / deny / cleared playbooks against a fake world, the same way, in parallel containers
+bash tools/flow_tests.sh

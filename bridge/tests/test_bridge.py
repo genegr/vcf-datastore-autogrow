@@ -108,6 +108,32 @@ def test_happy_path(cfg):
     assert "Approved" in blocks[-1]["text"]["text"]
 
 
+# ------------------------------------------------------------------ what travels in the event (ansible renders event strings as templates)
+@pytest.mark.parametrize("name,signed", [
+    ("jane.doe", "jane.doe"),
+    ("Jane Doe (SRE)", "Jane Doe (SRE)"),
+    ("{{ lookup('pipe', 'id') }}", "__ lookup(_pipe__ _id_) __"),
+    ("{% if 1 %}x{% endif %}", "__ if 1 __x__ endif __"),
+    ("#jinja2:variable_start_string:'[%'", "_jinja2_variable_start_string_____"),
+    ("a\nb\x00c", "a_b_c"),
+    ("x" * 200, "x" * 80),
+    ("", ""),
+    (None, ""),
+])
+def test_the_signed_approver_name_is_plain_text(cfg, name, signed):
+    bridge, _, sender = make(cfg)
+    assert bridge.approve(user_id=APPROVER, user_name=name, channel=CHANNEL, ts=TS, blocks=BLOCKS,
+                          button_value=value()) is None
+    assert sender.events[0][1]["approver_name"] == signed
+
+
+def test_custom_approval_signs_a_clean_name_too(cfg):
+    bridge, _, sender = make(cfg)
+    meta = {"value": value(tgt=None), "channel": CHANNEL, "ts": TS}
+    assert bridge.approve_custom(user_id=APPROVER, user_name="{{ 7 * 7 }}", metadata=meta, size_text="704 GiB") is None
+    assert sender.events[0][1]["approver_name"] == "__ 7 _ 7 __"
+
+
 # ------------------------------------------------------------------ which button (owner 2026-11-20)
 def test_label_and_value_must_agree(cfg):
     """A button whose label shows another size than the one it carries sends nothing."""
@@ -205,18 +231,34 @@ def test_send_failure_restores_buttons(cfg):
 
 
 # ------------------------------------------------------------------ deny
-def test_deny_never_sends(cfg):
+def test_deny_sends_a_signed_denial_and_never_an_approval(cfg):
+    """Finding 3: a denial used to be forgotten by everything but the bridge's memory."""
     bridge, slack, sender = make(cfg)
-    assert bridge.deny(user_id=APPROVER, channel=CHANNEL, ts=TS, blocks=BLOCKS, button_value=value()) is None
-    assert sender.events == []
+    assert bridge.deny(user_id=APPROVER, user_name="{{ 7 * 7 }}", channel=CHANNEL, ts=TS, blocks=BLOCKS,
+                       button_value=value()) is None
+    assert [e["decision"] for _, e in sender.events] == ["deny"]
+    event = sender.events[0][1]
+    assert event["schema"] == "dsgrow.approval.v1" and event["rid"] == RID and event["approver_id"] == APPROVER
+    assert "tgt" not in event, "a denial carries no size"
+    assert event["approver_name"] == "__ 7 _ 7 __", "the name is cleaned like an approval's"
     assert slack.names() == ["chat_update"]
     assert "Denied" in slack.calls[0][1]["blocks"][-1]["text"]["text"]
+
+
+def test_a_denial_that_is_not_delivered_restores_the_buttons(cfg):
+    bridge, slack, _ = make(cfg, FakeSender(fail="the rulebook is not reachable (refused)"))
+    assert "not reachable" in bridge.deny(user_id=APPROVER, channel=CHANNEL, ts=TS, blocks=BLOCKS,
+                                          button_value=value())
+    assert [b for b in slack.calls[-1][1]["blocks"] if b["type"] == "actions"], "buttons must be back"
+    assert "not recorded" in slack.calls[-1][1]["blocks"][-1]["text"]["text"]
+    bridge.sender = FakeSender()   # the claim is released: a retry can send
+    assert bridge.deny(user_id=APPROVER, channel=CHANNEL, ts=TS, blocks=BLOCKS, button_value=value()) is None
 
 
 def test_deny_unauthorised(cfg):
     bridge, slack, sender = make(cfg)
     assert bridge.deny(user_id=STRANGER, channel=CHANNEL, ts=TS, blocks=BLOCKS, button_value=value()) == "not an approver"
-    assert slack.names() == ["chat_postEphemeral"]
+    assert slack.names() == ["chat_postEphemeral"] and sender.events == []
 
 
 # ------------------------------------------------------------------ custom
@@ -255,6 +297,38 @@ def test_signature_matches_what_the_rulebook_verifies():
     # ansible.eda.webhook: strips "sha256=" and compares hex HMAC-SHA256 of the raw body
     assert sig.startswith("sha256=")
     assert hmac.compare_digest(sig[len("sha256="):], hmac.new(b"secret-hmac", body, hashlib.sha256).hexdigest())
+
+
+def test_the_loopback_post_ignores_proxy_environment(monkeypatch):
+    """The event carries the approvals token and an HMAC: it goes straight to the rulebook, never through a proxy."""
+    import http.server
+    import threading
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            seen.append((self.headers.get("Authorization"), self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.setenv(name, "http://127.0.0.1:9")   # a proxy that is not there
+        for name in ("NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        event = {"schema": rulebook_client.SCHEMA, "decision": "approve"}
+        url = "http://127.0.0.1:%d/approval" % server.server_address[1]
+        assert rulebook_client.send(url, "tok", "secret", event) == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert seen and seen[0][0] == "Bearer tok"
 
 
 def test_client_refuses_other_schemas():

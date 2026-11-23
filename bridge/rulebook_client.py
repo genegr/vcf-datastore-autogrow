@@ -9,6 +9,9 @@ import urllib.request
 
 SCHEMA = "dsgrow.approval.v1"
 SIGNATURE_HEADER = "x-dsgrow-signature"
+# The event carries the approvals token and an HMAC of the body, and goes to a loopback address: never through a proxy
+# named by HTTP_PROXY / ALL_PROXY in the container's environment.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class SendError(RuntimeError):
@@ -33,7 +36,7 @@ def send(url: str, token: str, secret: str, event: dict, timeout: float = 10.0) 
     req.add_header("Authorization", "Bearer " + token)
     req.add_header(SIGNATURE_HEADER, signature(secret, body))
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _OPENER.open(req, timeout=timeout) as resp:
             if resp.status != 200:
                 raise SendError("the rulebook answered HTTP %d" % resp.status)
             return resp.status

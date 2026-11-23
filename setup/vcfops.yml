@@ -64,7 +64,7 @@
         body_format: json
         body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
         headers: {Accept: application/json}
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
       register: vo_tok
       check_mode: false
       no_log: true
@@ -81,7 +81,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/symptomdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_sd
           check_mode: false
           no_log: true
@@ -103,7 +103,7 @@
                 severity: WARNING
                 condition: {type: CONDITION_HT, key: "{{ item.key }}", operator: "{{ item.operator }}",
                             value: "{{ item.value }}", valueType: NUMERIC, instanced: false, thresholdType: STATIC}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 201]
           loop: "{{ vo_symptoms }}"
           loop_control:
@@ -127,7 +127,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/symptomdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_sd
           check_mode: false
           no_log: true
@@ -146,7 +146,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_ad
           check_mode: false
           no_log: true
@@ -177,7 +177,7 @@
                     relation: SELF
                     symptomSetOperator: OR
                     symptomDefinitionIds: "{{ vo_sym_ids }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 201]
           when:
             - vo_alert not in (vo_ad.json.alertDefinitions | map(attribute='name'))
@@ -207,7 +207,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_ad
           check_mode: false
           no_log: true
@@ -216,7 +216,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/policies?activesOnly=true"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_pols
           check_mode: false
           no_log: true
@@ -236,7 +236,7 @@
               vo_enable_want.policies | map('regex_replace', '^', 'policyId=') | join('&') }}
             method: PUT
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_en
           changed_when: true
           failed_when: false   # no_log hides the result; checked next
@@ -266,7 +266,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/alertplugins"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_pl
           check_mode: false
           no_log: true
@@ -282,9 +282,9 @@
               name: "{{ vo_plugin }}"
               description: dsgrow - ansible-rulebook vcfops source on the run host
               configValues:
-                - {name: Url, value: "http://{{ dsgrow_eda_host }}:{{ dsgrow_eda_vcfops_port }}"}
+                - {name: Url, value: "{{ dsgrow_eda_vcfops_scheme | default('http') }}://{{ dsgrow_eda_host }}:{{ dsgrow_eda_vcfops_port }}"}
                 - {name: ConnectionTimeoutInSeconds, value: "30"}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 201]
           when:
             - vo_plugin not in (vo_pl.json.notificationPluginInstances | map(attribute='name'))
@@ -306,11 +306,29 @@
             quiet: true
           when: vo_pl_new is not skipped
 
+        # This step only creates the instance. One that already exists keeps the Url it was made with, so changing the
+        # host, port or scheme (dsgrow_eda_vcfops_scheme: https) would otherwise report changed=0 and do nothing.
+        - name: An existing outbound instance points where the inventory says
+          ansible.builtin.assert:
+            that: vo_url_have | lower | trim('/') == vo_url_want | lower | trim('/')
+            fail_msg: >-
+              the outbound instance {{ vo_plugin }} already exists with Url {{ vo_url_have }}, the inventory wants
+              {{ vo_url_want }}: this step only creates it. Change the Url in VCF Operations (Administration, Outbound
+              Settings) or remove the instance (setup/vcfops_cleanup.yml) and run this step again.
+            quiet: true
+          vars:
+            vo_url_want: "{{ dsgrow_eda_vcfops_scheme | default('http') }}://{{ dsgrow_eda_host }}:{{ dsgrow_eda_vcfops_port }}"
+            vo_url_have: >-
+              {{ (vo_pl.json.notificationPluginInstances | selectattr('name', 'equalto', vo_plugin) | first | default({}))
+                 .configValues | default([]) | selectattr('name', 'equalto', 'Url') | map(attribute='value') | first
+                 | default('') }}
+          when: vo_plugin in (vo_pl.json.notificationPluginInstances | map(attribute='name'))
+
         - name: Outbound instances (read back)
           ansible.builtin.uri:
             url: "{{ vo_api }}/alertplugins"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_pl
           check_mode: false
           no_log: true
@@ -324,7 +342,7 @@
             url: "{{ vo_api }}/alertplugins/{{ vo_plugin_obj.pluginId }}/enable/true"
             method: PUT
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 204]
           when: vo_plugin_obj | length > 0 and not vo_plugin_obj.enabled | default(false) and not ansible_check_mode
           changed_when: true
@@ -349,7 +367,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/alertplugins"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_pl
           check_mode: false
           no_log: true
@@ -364,7 +382,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/notifications/templates"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_tpl
           check_mode: false
           no_log: true
@@ -387,7 +405,7 @@
                 newAlertTemplate: "{{ vo_entry | combine({'payload': vo_payloads.new}) }}"
                 updatedAlertTemplate: "{{ vo_entry | combine({'payload': vo_payloads.updated}) }}"
                 canceledAlertTemplate: "{{ vo_entry | combine({'payload': vo_payloads.canceled}) }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 201]
           vars:
             vo_payloads:
@@ -424,7 +442,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/notifications/templates"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_tpl
           check_mode: false
           no_log: true
@@ -434,7 +452,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/alertdefinitions?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_ad
           check_mode: false
           no_log: true
@@ -443,7 +461,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/notifications/rules"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_rules
           check_mode: false
           no_log: true
@@ -476,7 +494,7 @@
               alertTypeFilters: []
               alertDefinitionIdFilters: {values: ["{{ vo_alert_obj.id }}"]}
               sendHeartbeat: false
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 201]
           when: vo_rule_obj | length == 0 and not ansible_check_mode
           changed_when: true
@@ -500,7 +518,7 @@
           ansible.builtin.uri:
             url: "{{ vo_api }}/notifications/rules"
             headers: "{{ vo_h }}"
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
           register: vo_rules
           check_mode: false
           no_log: true
@@ -511,7 +529,7 @@
             url: "{{ vo_api }}/auth/token/release"
             method: POST
             headers: {Authorization: "OpsToken {{ vo_tok.json.token }}", Accept: application/json}
-            validate_certs: false
+            validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
             status_code: [200, 204]
           check_mode: false
           when: vo_tok.json.token is defined

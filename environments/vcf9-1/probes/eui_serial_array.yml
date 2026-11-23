@@ -7,7 +7,7 @@
 - name: "{{ pr_item.key }}: REST versions"
   ansible.builtin.uri:
     url: "{{ pr_fa.url }}/api/api_version"
-    validate_certs: false
+    validate_certs: "{{ pr_fa.validate_certs | default(true) | bool }}"
     return_content: true
   register: pr_versions
 
@@ -17,7 +17,7 @@
     method: POST
     headers:
       api-token: "{{ dsgrow_lab_fa_admin_tokens[pr_item.key] }}"
-    validate_certs: false
+    validate_certs: "{{ pr_fa.validate_certs | default(true) | bool }}"
   register: pr_login
   no_log: true
 
@@ -28,7 +28,7 @@
         url: "{{ pr_fa.url }}/api/{{ pr_fa.api_version }}/volumes?names={{ pr_item.value | list | join(',') | urlencode }}"
         headers:
           x-auth-token: "{{ pr_login.x_auth_token }}"
-        validate_certs: false
+        validate_certs: "{{ pr_fa.validate_certs | default(true) | bool }}"
         return_content: true
       register: pr_vols
       no_log: true
@@ -40,7 +40,7 @@
           ("serial='" ~ pr_vols.json['items'][0].serial ~ "'") | urlencode }}
         headers:
           x-auth-token: "{{ pr_login.x_auth_token }}"
-        validate_certs: false
+        validate_certs: "{{ pr_fa.validate_certs | default(true) | bool }}"
         return_content: true
       register: pr_by_serial
       no_log: true
@@ -50,7 +50,7 @@
         url: "{{ pr_fa.url }}/api/{{ pr_fa.api_version }}/arrays/space"
         headers:
           x-auth-token: "{{ pr_login.x_auth_token }}"
-        validate_certs: false
+        validate_certs: "{{ pr_fa.validate_certs | default(true) | bool }}"
         return_content: true
       register: pr_space
       no_log: true
@@ -62,7 +62,7 @@
         method: POST
         headers:
           x-auth-token: "{{ pr_login.x_auth_token }}"
-        validate_certs: false
+        validate_certs: "{{ pr_fa.validate_certs | default(true) | bool }}"
         status_code: [200, 204]
       no_log: true
 

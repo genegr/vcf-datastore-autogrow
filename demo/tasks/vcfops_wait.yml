@@ -12,7 +12,7 @@
     body_format: json
     body: {username: "{{ dsgrow_lab.ops_admin_user }}", password: "{{ dsgrow_lab_ops_admin_password }}", authSource: "{{ dsgrow_lab.ops_auth_source }}"}
     headers: {Accept: application/json}
-    validate_certs: false
+    validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
   register: dv_tok
   check_mode: false
   no_log: true
@@ -23,7 +23,7 @@
       ansible.builtin.uri:
         url: "{{ dsgrow_vcfops_url }}/api/resources?adapterKind=VMWARE&resourceKind=Datastore&pageSize=1000"
         headers: {Authorization: "OpsToken {{ dv_tok.json.token }}", Accept: application/json}
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
       register: dv_res
       until: dv_res.json is defined and (dv_res.json | community.general.json_query(dv_query) | length) == 1
       retries: 40
@@ -55,7 +55,7 @@
         url: "{{ dsgrow_vcfops_url }}/api/auth/token/release"
         method: POST
         headers: {Authorization: "OpsToken {{ dv_tok.json.token }}", Accept: application/json}
-        validate_certs: false
+        validate_certs: "{{ dsgrow_vcfops_validate_certs | default(true) | bool }}"
         status_code: [200, 204]
       check_mode: false
       changed_when: false
