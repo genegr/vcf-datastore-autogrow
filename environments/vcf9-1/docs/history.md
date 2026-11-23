@@ -735,3 +735,12 @@ steps, each with the owner's go-ahead ("go ahead with steps 1 and 2", "step 3", 
 - Cleanup (owner: "now clean up the environment", `cleanup-20261123T230507Z.log`, 23:05 UTC, no dry run: unchanged since
   the 22:49 run): ok=63 changed=11 failed=0, 1 min 53 s. Read-back: datastore and volume absent, lock released. The lab is
   back to its clean initial state.
+- Init (owner: "initialize the demo", `init-20261123T232549Z.log`, 23:25 UTC): ok=67 changed=13 failed=0, 3 min 03 s.
+- Start (owner: "start the demo", `start-20261123T232931Z.log`, 23:29 UTC): ok=37/11 changed=2/4 failed=0, 54 s; 85.0 %
+  after 37 s. Proposal 23:31:09 (718aa26d-...) 256 / 272 / 288 GiB; the owner clicked DENY at 23:31:34. First live use of
+  the recorded denial: the bridge sent a deny event and deny.yml ran 4 s later. Read-back: request status denied with the
+  approver (cleaned name) and time 23:31:38 and the event uuid, no approval or result block; the lock stays proposed
+  until the request expires (about 4 h), so no new proposal for the datastore meanwhile; no REJECTED line, no error; the
+  datastore untouched (85.0 %, volume 200 GiB). Not exercised live: an approval arriving after a denial (a Custom form
+  opened before it), covered offline. The demo is left initialized and filled to 85 %, the denied request holding the
+  lock; "now clean up the environment" closes it.
