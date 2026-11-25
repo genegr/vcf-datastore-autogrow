@@ -265,13 +265,89 @@ def test_text_fields_accept_real_looking_values_and_refuse_a_jinja_opener(field)
             assert not re.fullmatch(pattern, value), (rule["name"], field, value[:40])
 
 
-def test_identifiers_do_not_accept_a_trailing_newline():
-    """The text fields (link, ...) may hold a newline: without a Jinja opener it cannot start a template."""
-    payload = _fixture("vcfops/new_datastore_80.json")
-    for rule in _vcfops_rules():
-        patterns = _patterns(rule)
-        for field in ("alert_id", "resource_id", "resource_name"):
-            assert not re.fullmatch(patterns[("payload", field)], payload[field] + "\n"), (rule["name"], field)
+# The rulebook engine (Java) reads "^...$" leniently: "$" also matches in front of a FINAL line terminator, so
+# "ds-capacity01" + newline passed (the real-engine test posted it and propose started). Every strict field carries a
+# second condition, `is not search("[^ -~]")`: no character outside printable ASCII anywhere in the value.
+_NOT_SEARCH = re.compile(r'event\.(payload|meta)\.([A-Za-z_]+) is not search\("([^"]*)"\)')
+_GUARD = "[^ -~]"
+_TERMINATORS = ["\n", "\r", "\r\n", "\u0085", " ", " ", "\n\n", "\t"]
+_FINAL_TERMINATOR = re.compile("(\r\n|[\n\r\u0085  ])$")
+_FREE_TEXT = {"criticality", "cancel_time", "link"}     # text a playbook shows: only a Jinja opener matters there
+
+
+def _guards(rule):
+    found = {}
+    for scope, field, pattern in _NOT_SEARCH.findall(_condition(rule)):
+        assert (scope, field) not in found, "%s is guarded twice in %s" % (field, rule["name"])
+        found[(scope, field)] = pattern
+    return found
+
+
+def _engine_accepts(rule, scope, field, value):
+    """The condition for one field as the engine evaluates it: the pattern with the lenient "$", and the guard."""
+    pattern = _patterns(rule)[(scope, field)]
+    lenient = re.match(pattern, _FINAL_TERMINATOR.sub("", value, count=1))
+    guard = _guards(rule).get((scope, field))
+    return bool(lenient) and not (guard and re.search(guard, value))
+
+
+def test_every_strict_field_has_the_printable_ascii_guard_and_the_text_fields_do_not():
+    seen = 0
+    for rule in _playbook_rules():
+        strict = {k for k, p in _patterns(rule).items() if k[1] not in _FREE_TEXT}
+        guards = _guards(rule)
+        assert set(guards) == strict, "%s: unguarded %s, guard without a pattern %s" % (
+            rule["name"], sorted(strict - set(guards)), sorted(set(guards) - strict))
+        for key, guard in guards.items():
+            seen += 1
+            assert guard == _GUARD, "%s: %s" % (rule["name"], key)
+    assert seen >= 26
+
+
+def _example(rule, scope, field):
+    if scope == "meta":
+        return "alerts"
+    if field == "adapter_instance":
+        return "vcenter01.example.lab"
+    condition = _condition(rule)
+    if 'event.meta.source.name == "approvals"' in condition:
+        name = "approvals/deny.json" if 'event.payload.decision == "deny"' in condition else "approvals/approve.json"
+    else:
+        name = "vcfops/new_datastore_80.json"
+    return str(_fixture(name)[field])
+
+
+def test_the_engines_lenient_dollar_would_accept_a_final_line_terminator_without_the_guard():
+    """Proves the test below can fail: with only the pattern, a value plus a final terminator is accepted."""
+    rule = _vcfops_rules()[0]
+    for field in ("alert_id", "resource_id", "resource_name"):
+        value = _example(rule, "payload", field)
+        pattern = _patterns(rule)[("payload", field)]
+        assert re.match(pattern, value)
+        assert re.match(pattern, _FINAL_TERMINATOR.sub("", value + "\n", count=1)), field
+
+
+def test_identifiers_do_not_accept_a_line_terminator_or_a_control_character():
+    seen = 0
+    for rule in _playbook_rules():
+        for (scope, field) in _patterns(rule):
+            if field in _FREE_TEXT:
+                continue
+            value = _example(rule, scope, field)
+            assert _engine_accepts(rule, scope, field, value), "%s: %s refuses its own example %r" % (rule["name"], field, value)
+            for terminator in _TERMINATORS:
+                for bad in (value + terminator, terminator + value):
+                    seen += 1
+                    assert not _engine_accepts(rule, scope, field, bad), "%s: %s accepts %r" % (rule["name"], field, bad)
+    assert seen >= 400
+
+
+def test_the_guard_is_portable_to_the_rulebook_engine():
+    for rule in _playbook_rules():
+        for guard in _guards(rule).values():
+            for bad in ("\\", "(?", "&&", "{{", "}}"):
+                assert bad not in guard
+            re.compile(guard)
 
 
 # ------------------------------------------------------------------ the bridge: approver_name is the one free-text field

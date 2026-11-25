@@ -1,6 +1,7 @@
 """Unit tests for plugins/filter/dsgrow.py (pure functions, no ansible needed)."""
 import importlib.util
 import pathlib
+import re
 
 import pytest
 
@@ -211,9 +212,26 @@ def test_request_expired():
     assert not f.dsgrow_request_expired(100, 99)
 
 
-def test_lock_name():
-    assert f.dsgrow_lock_name("VCenter01.example.lab", "ds-capacity01") == "vcenter01.example.lab__ds-capacity01"
-    assert "/" not in f.dsgrow_lock_name("vc", "a/b c")
+def test_lock_name_is_readable_stable_and_safe():
+    name = f.dsgrow_lock_name("VCenter01.example.lab", "ds-capacity01")
+    # pinned: changing the algorithm orphans every lock file that exists (a lock held then is no longer seen)
+    assert name == "vcenter01.example.lab__ds-capacity01.7c39bfd1546a"
+    assert f.dsgrow_lock_name("vcenter01.EXAMPLE.lab", "ds-capacity01") == name, "the vCenter name is case-insensitive"
+    assert f.dsgrow_lock_name("vc", "Ds") != f.dsgrow_lock_name("vc", "ds"), "a datastore name is case-sensitive"
+    for vc, ds in (("vc", "a/b c"), ("vc", "../../etc"), ("vc", "x\ny"), ("vc", "dsé"), ("vc", "a" * 80), ("v" * 253, "d" * 80)):
+        out = f.dsgrow_lock_name(vc, ds)
+        assert re.fullmatch(r"[A-Za-z0-9._-]+", out), out
+        assert len(out) + len(".json") <= 200, len(out)
+        assert not out.startswith("."), out
+
+
+@pytest.mark.parametrize("a,b", [("ds 1", "ds_1"), ("prod(a)", "prod_a_"), ("a+b", "a_b"), ("a b", "a  b"), ("x/y", "x_y"),
+                                 ("dsé", "ds_"), ("a" * 150 + "1", "a" * 150 + "2")])
+def test_two_different_datastores_never_share_a_lock(a, b):
+    """The old name mapped every other character to '_': 'ds 1' and 'ds_1' (or 'prod(a)' and 'prod_a_') shared one lock,
+    so one datastore blocked proposals for the other. It cost availability, never a wrong growth."""
+    assert f.dsgrow_lock_name("vc.example.lab", a) != f.dsgrow_lock_name("vc.example.lab", b)
+    assert f.dsgrow_lock_name("vc1.example.lab", a) != f.dsgrow_lock_name("vc2.example.lab", a)
 
 
 def test_slack_escape():

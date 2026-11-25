@@ -29,7 +29,10 @@
 
     - name: Result
       ansible.builtin.debug:
-        msg: "{{ item.dsgrow_vc.hostname }}: {{ item.about_info.product_name | default('?') }} {{ item.about_info.version | default('?') }} (build {{ item.about_info.build | default('?') }}), login ok as {{ item.dsgrow_vc.username }}"
+        msg: >-
+          {{ item.dsgrow_vc.hostname }}: {{ item.about_info.product_name | default('?') }}
+          {{ item.about_info.version | default('?') }} (build {{ item.about_info.build | default('?') }}),
+          login ok as {{ item.dsgrow_vc.username }}
       loop: "{{ vl_about.results }}"
       loop_control:
         label: "{{ item.dsgrow_vc.hostname }}"

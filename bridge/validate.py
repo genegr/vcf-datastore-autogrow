@@ -11,6 +11,9 @@ import re
 
 GIB = 1024 ** 3
 TIB = 1024 ** 4
+# A custom size beyond this is a typo: the caps refuse far less (64 TiB is the VMFS 6 limit), and a number of hundreds of
+# digits made human() raise OverflowError and kill the form handler unanswered. Same bound in plugins/filter/dsgrow.py.
+MAX_SIZE_BYTES = 1024 ** 5     # 1024 TiB
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _DEV = re.compile(r"^(naa\.624a9370[0-9a-f]{24}|eui\.00[0-9a-f]{14}24a937[0-9a-f]{10})$")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
@@ -65,7 +68,8 @@ def parse_request(value: str) -> Request:
                       tgt=int(data["tgt"]) if data.get("tgt") is not None else None)
     except (KeyError, TypeError, ValueError):
         raise Invalid("this button's request is incomplete")
-    if not _UUID.match(req.rid) or not _DEV.match(req.dev) or not _NAME.match(req.ds) or not _HOST.match(req.vc):
+    # fullmatch, not match: with a "$" anchor, match() accepts a trailing newline
+    if not (_UUID.fullmatch(req.rid) and _DEV.fullmatch(req.dev) and _NAME.fullmatch(req.ds) and _HOST.fullmatch(req.vc)):
         raise Invalid("this button's request has malformed identifiers")
     if req.cur <= 0 or (req.tgt is not None and req.tgt <= 0):
         raise Invalid("this button's request has malformed sizes")
@@ -84,8 +88,12 @@ def parse_size(text: str) -> int:
         num = int(whole) * factor * 10 ** len(frac) + int(frac) * factor
         if num % 10 ** len(frac):
             raise Invalid("%s is not a whole number of bytes" % text.strip())
-        return num // 10 ** len(frac)
-    return int(number) * factor
+        value = num // 10 ** len(frac)
+    else:
+        value = int(number) * factor
+    if value > MAX_SIZE_BYTES:
+        raise Invalid("that size is out of range (at most %s)" % human(MAX_SIZE_BYTES))
+    return value
 
 
 def check(req: Request, target: int, caps, now: int) -> list:

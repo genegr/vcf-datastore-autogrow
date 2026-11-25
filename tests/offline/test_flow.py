@@ -39,11 +39,15 @@ CHANNEL, TS = "C0TEST0001", "1763546400.000100"
 pytestmark = pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason="ansible-playbook not installed")
 
 
-def _serial(device):
+def _filter():
     spec = importlib.util.spec_from_file_location("dsgrow_filter_under_test", ROOT / "plugins" / "filter" / "dsgrow.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.dsgrow_device_to_fa_serial(device)
+    return module
+
+
+def _serial(device):
+    return _filter().dsgrow_device_to_fa_serial(device)
 
 
 class FakeSlack:
@@ -127,7 +131,7 @@ class Lab:
 
     # ---------------------------------------------------------------- the state files
     def lock_path(self):
-        return self.state / "locks" / ("%s__%s.json" % (VC, DS))
+        return self.state / "locks" / (_filter().dsgrow_lock_name(VC, DS) + ".json")
 
     def request(self, rid):
         return json.loads((self.state / "requests" / ("%s.json" % rid)).read_text(encoding="utf-8"))

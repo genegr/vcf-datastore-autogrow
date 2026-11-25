@@ -20,7 +20,10 @@
 # the real playbooks). A playbook that starts reading a new field needs a pattern for it here:
 # tests/unit/test_rulebook_allowlist.py finds every field the playbooks read and fails until it has one. The patterns
 # are plain character classes (no backslash, lookaround or doubled brace), so the rulebook engine's Java matcher and
-# Python read them alike. An event that fails a pattern falls through to the "Rejected alert" rule below and is
+# Python read them alike. The engine's "$" also matches in front of a final line terminator, so "ds-1" followed by a
+# newline passed "^...$" (tests/rulebook posted it: propose started). Every strict field therefore carries a second
+# condition, is not search("[^ -~]"): no character outside printable ASCII anywhere in it (newline, CR, NEL, U+2028...).
+# An event that fails a pattern falls through to the "Rejected alert" rule below and is
 # logged with the values it saw. The playbooks' own re-checks (roles/dsgrow_resolve/tasks/alert_input.yml) run AFTER
 # the rendering and are not a guard.
 - name: dsgrow datastore capacity
@@ -46,16 +49,21 @@
       condition: >
         event.meta.source.name == "vcfops"
         and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
+        and event.meta.endpoint is not search("[^ -~]")
         and event.payload.schema == "dsgrow.vcfops.v1"
         and event.payload.event in ["new", "updated"]
         and event.payload.resource_kind == "Datastore"
         and event.payload.alert_definition in vars.dsgrow_alert_definitions
         and event.payload.alert_id is defined
         and event.payload.alert_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
+        and event.payload.alert_id is not search("[^ -~]")
         and event.payload.resource_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
+        and event.payload.resource_id is not search("[^ -~]")
         and event.payload.resource_name is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and event.payload.resource_name is not search("[^ -~]")
         and (event.payload.adapter_instance is not defined
-             or event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$"))
+             or (event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$")
+                 and event.payload.adapter_instance is not search("[^ -~]")))
         and event.payload.criticality is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
         and event.payload.cancel_time is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
         and event.payload.link is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
@@ -75,16 +83,21 @@
       condition: >
         event.meta.source.name == "vcfops"
         and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
+        and event.meta.endpoint is not search("[^ -~]")
         and event.payload.schema == "dsgrow.vcfops.v1"
         and event.payload.event == "canceled"
         and event.payload.resource_kind == "Datastore"
         and event.payload.alert_definition in vars.dsgrow_alert_definitions
         and event.payload.alert_id is defined
         and event.payload.alert_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
+        and event.payload.alert_id is not search("[^ -~]")
         and event.payload.resource_id is match("^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$")
+        and event.payload.resource_id is not search("[^ -~]")
         and event.payload.resource_name is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and event.payload.resource_name is not search("[^ -~]")
         and (event.payload.adapter_instance is not defined
-             or event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$"))
+             or (event.payload.adapter_instance is match("^[A-Za-z0-9.:_-]{1,253}$")
+                 and event.payload.adapter_instance is not search("[^ -~]")))
         and event.payload.criticality is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
         and event.payload.cancel_time is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
         and event.payload.link is match("^$|^([^#{]|[{][^{%#])([^{]|[{][^{%#])*[{]?$|^[{]$")
@@ -96,17 +109,26 @@
       condition: >
         event.meta.source.name == "approvals"
         and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
+        and event.meta.endpoint is not search("[^ -~]")
         and event.payload.schema == "dsgrow.approval.v1"
         and event.payload.decision == "approve"
         and event.payload.rid is match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        and event.payload.rid is not search("[^ -~]")
         and event.payload.vc is match("^[A-Za-z0-9.-]{1,253}$")
+        and event.payload.vc is not search("[^ -~]")
         and event.payload.ds is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and event.payload.ds is not search("[^ -~]")
         and event.payload.dev is match("^(naa[.]624a9370[0-9a-f]{24}|eui[.]00[0-9a-f]{14}24a937[0-9a-f]{10})$")
+        and event.payload.dev is not search("[^ -~]")
         and event.payload.tgt > 0
         and event.payload.approver_id is match("^[UW][A-Z0-9]{2,20}$")
+        and event.payload.approver_id is not search("[^ -~]")
         and event.payload.approver_name is match("^[A-Za-z0-9 ._()@-]{0,80}$")
+        and event.payload.approver_name is not search("[^ -~]")
         and event.payload.channel is match("^[CGD][A-Z0-9]{2,31}$")
+        and event.payload.channel is not search("[^ -~]")
         and event.payload.ts is match("^[0-9]{1,12}[.][0-9]{1,8}$")
+        and event.payload.ts is not search("[^ -~]")
       action:
         run_playbook:
           name: playbooks/execute.yml
@@ -117,16 +139,25 @@
       condition: >
         event.meta.source.name == "approvals"
         and event.meta.endpoint is match("^[A-Za-z0-9/_.-]{0,64}$")
+        and event.meta.endpoint is not search("[^ -~]")
         and event.payload.schema == "dsgrow.approval.v1"
         and event.payload.decision == "deny"
         and event.payload.rid is match("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        and event.payload.rid is not search("[^ -~]")
         and event.payload.vc is match("^[A-Za-z0-9.-]{1,253}$")
+        and event.payload.vc is not search("[^ -~]")
         and event.payload.ds is match("^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}$")
+        and event.payload.ds is not search("[^ -~]")
         and event.payload.dev is match("^(naa[.]624a9370[0-9a-f]{24}|eui[.]00[0-9a-f]{14}24a937[0-9a-f]{10})$")
+        and event.payload.dev is not search("[^ -~]")
         and event.payload.approver_id is match("^[UW][A-Z0-9]{2,20}$")
+        and event.payload.approver_id is not search("[^ -~]")
         and event.payload.approver_name is match("^[A-Za-z0-9 ._()@-]{0,80}$")
+        and event.payload.approver_name is not search("[^ -~]")
         and event.payload.channel is match("^[CGD][A-Z0-9]{2,31}$")
+        and event.payload.channel is not search("[^ -~]")
         and event.payload.ts is match("^[0-9]{1,12}[.][0-9]{1,8}$")
+        and event.payload.ts is not search("[^ -~]")
       action:
         run_playbook:
           name: playbooks/deny.yml

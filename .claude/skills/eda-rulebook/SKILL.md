@@ -71,6 +71,9 @@ Pins: ansible-rulebook 1.3.2, `ansible.eda` 2.13.0 (`docker/`).
 
 - The `vcfops` source never reaches `execute.yml` (CLAUDE.md rule 11).
 - Every new condition gets a fixture that matches and one that must not.
+- A strict field needs TWO conditions: `is match("^...$")` and `is not search("[^ -~]")`. The engine's `$` also matches in
+  front of a final line terminator (tests/rulebook posted "id" + newline and propose started); the second condition refuses
+  any character outside printable ASCII. `tests/unit/test_rulebook_allowlist.py` fails for a strict field without it.
 - `meta.headers`, `payload.sent_at` and an extra key reach the playbook in the event with no pattern. ansible-core 2.21.4 (read
   in its `_lazy_containers.py`) renders a value of the event when that item is read, but a whole-container operation
   (`to_json`, `str()`, `combine`, a loop over the values, `debug var=`) renders every value in it: no task may dump, print or

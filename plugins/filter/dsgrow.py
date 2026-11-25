@@ -10,6 +10,7 @@ Device IDs of Everpure FlashArray volumes (serial = 24 hex digits):
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 
@@ -88,6 +89,7 @@ def dsgrow_human_bytes(value):
 
 
 _SIZE_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(t|tb|tib|g|gb|gib)?\s*$", re.IGNORECASE)
+MAX_SIZE_BYTES = 1024 ** 5     # 1024 TiB: the same bound as bridge/validate.py (a typo, not a size)
 
 
 def dsgrow_parse_size(text):
@@ -106,6 +108,8 @@ def dsgrow_parse_size(text):
             raise AnsibleFilterError("size %r is not a whole number of bytes" % (text,))
     else:
         value = int(number) * factor
+    if value > MAX_SIZE_BYTES:
+        raise AnsibleFilterError("size %r is out of range (at most 1024 TiB)" % (text,))
     return value
 
 
@@ -199,9 +203,13 @@ def dsgrow_slack_escape(text):
 
 
 def dsgrow_lock_name(vcenter, datastore):
-    """File-system safe, stable name for the per-datastore lock and request index."""
-    raw = "%s__%s" % (str(vcenter).lower(), str(datastore))
-    return re.sub(r"[^A-Za-z0-9._-]", "_", raw)
+    """File-system safe, stable, collision-free name for the per-datastore lock: a readable part (every other character
+    becomes '_', cut to 120) plus a hash of the RAW names, so that 'ds 1' and 'ds_1' (or 'prod(a)' and 'prod_a_') do not
+    share a lock. The vCenter name is case-insensitive, the datastore name is not. NOTE: changing this orphans every lock
+    file that exists: only with nothing in flight (tests/unit/test_filter_dsgrow.py pins one value)."""
+    vc, ds = str(vcenter).lower(), str(datastore)
+    readable = re.sub(r"[^A-Za-z0-9._-]", "_", "%s__%s" % (vc, ds))[:120].lstrip(".")
+    return "%s.%s" % (readable, hashlib.sha256(("%s\n%s" % (vc, ds)).encode("utf-8")).hexdigest()[:12])
 
 
 class FilterModule(object):
