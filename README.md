@@ -76,8 +76,8 @@ What a deployment still has to take care of, and what the code does about the re
 
 - **Event strings are templates.** Ansible renders the strings of an event when a playbook reads them, so every field a
   playbook reads must pass an allow-list in the rulebook before the playbook starts (`rulebooks/datastore_capacity.yml`):
-  strict character sets for the identifiers that pick the datastore, and for the text shown in Slack only "no Jinja
-  opener". Fields nothing reads have no pattern, so an unexpected value there never drops an alert (they stay inert; a
+  strict character sets for the identifiers that pick the datastore (printable ASCII only, so not even a trailing
+  newline gets through), and for the text shown in Slack only "no Jinja opener". Fields nothing reads have no pattern, so an unexpected value there never drops an alert (they stay inert; a
   test runs the real playbooks to prove it). A rejected alert is logged as `dsgrow REJECTED` with the values it saw. The
   bridge cleans the approver's name the same way.
 - **The `vcfops` webhook (port 5080) is plain HTTP behind a bearer token, and nothing here sets up a firewall.** This is a
@@ -105,7 +105,11 @@ What a deployment still has to take care of, and what the code does about the re
   tests. vCenter's default SSO policy expires a password after 90 days (check yours): `setup/vcenter_account.yml` does
   not touch an existing user, so rotate by hand, then update `.state/secrets/vcenter-<key>.yml`, run `setup/deploy.yml`
   and `docker compose up -d rulebook bridge`.
-- **Deployment.** The rulebook container sees the code read-only and none of `.state/`, and keeps no capability
+- **The human gate is only as strong as the approvers' Slack accounts.** Nothing grows without a click from an allow-listed
+  approver, so an approver's account is the last line: require single sign-on and two-factor authentication for the people
+  in `DSGROW_APPROVER_IDS`, and keep that list short. The bridge checks the approver's Slack user ID, not the channel.
+- **Deployment.** Both services run with a read-only root filesystem (`/tmp` and, for the rulebook, `state/` are all they
+  can write) and no capability; the rulebook container also sees the code read-only and none of `.state/`
   (`compose.yaml`). `tools/sync.sh` refuses to copy over a datastore that is proposed or executing (`SYNC_FORCE=1`
   overrides, after the owner's go-ahead); the running rulebook still executes the files in that directory, so sync only
   between requests. `tools/probe.sh` and `tools/setup.sh` take a path of one shape and a short list of options.

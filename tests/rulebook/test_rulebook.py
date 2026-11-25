@@ -81,7 +81,9 @@ def rulebook(tmp_path_factory):
                DSGROW_EDA_APPROVALS_TOKEN=APPROVALS_TOKEN,
                DSGROW_APPROVAL_HMAC_SECRET=HMAC_SECRET,
                DSGROW_EDA_VCFOPS_BIND="0.0.0.0",
-               DSGROW_TEST_CALLS=str(calls))
+               DSGROW_TEST_CALLS=str(calls),
+               # as in compose.yaml: the root filesystem is read-only, Ansible's scratch directories go elsewhere
+               ANSIBLE_LOCAL_TEMP=str(out / "ansible-local"), ANSIBLE_REMOTE_TEMP=str(out / "ansible-remote"))
     env.pop("ANSIBLE_CONFIG", None)   # the stubs need nothing from the repo's ansible.cfg
     # The rulebook's ports are fixed (5080/5081). With the live rulebook up on the host network the test would talk
     # to it (seen 2026-11-20: 401 with the test token): run in a network namespace of its own (docker --network none).
@@ -165,6 +167,13 @@ def test_rulebook_routes_events(rulebook):
                **{f: INJECTION for f in UNREAD_FIELDS})
     assert _post(vc, odd, VCFOPS_TOKEN) == 200
     time.sleep(1)
+    # a valid identifier followed by a newline: Python's re.match(...$) accepts it, so the ENGINE's matcher is tested too
+    for n, field in enumerate(("alert_id", "resource_id", "resource_name"), 1):
+        nl = dict(_fixture("new_datastore_80.json"), alert_id="a1b2c3d4-0097-4000-8000-%012d" % n,
+                  resource_id="7e7e7e7e-0097-4c3b-9a71-%012d" % n)
+        nl[field] = nl[field] + "\n"
+        assert _post(vc, nl, VCFOPS_TOKEN) == 200, field
+        time.sleep(0.3)
     # ... and in the URL path the sender chose (meta.endpoint travels in the event too)
     assert _post(vc, dict(_fixture("new_datastore_80.json"), alert_id="a1b2c3d4-0098-4000-8000-000000000098",
                           resource_id="7e7e7e7e-0098-4c3b-9a71-000000000098"),

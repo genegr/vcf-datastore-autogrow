@@ -17,6 +17,8 @@ from validate import Invalid, Request, check, clean_name, human, parse_request, 
 
 log = logging.getLogger("dsgrow.bridge")
 
+BLOCKS_CACHE_MAX = 200   # proposals whose Custom form may still be open: the oldest is forgotten first
+
 # A size button's label, as proposal.json.j2 renders it ("Grow to 272 GiB (→ 62.4%)")
 _LABEL_SIZE = re.compile(r"Grow to ([0-9]+(?:\.[0-9]+)?)\s*([GT]iB)\b")
 
@@ -139,12 +141,17 @@ class Bridge:
     # ------------------------------------------------------------------ custom size
     def open_custom(self, *, trigger_id, user_id, channel, ts, blocks, button_value):
         """Open the modal first (trigger_id lives 3 s), check the rest on submit."""
+        if not self._authorised(user_id):
+            self._ephemeral(channel, user_id, ":no_entry: You are not an approver for datastore expansions.")
+            return
         try:
             req = parse_request(button_value)
         except Invalid as exc:
             self._ephemeral(channel, user_id, ":warning: %s" % exc)
             return
         self.blocks_cache[req.rid] = blocks
+        while len(self.blocks_cache) > BLOCKS_CACHE_MAX:
+            self.blocks_cache.pop(next(iter(self.blocks_cache)))
         self.slack.views_open(trigger_id=trigger_id,
                               view=messages.custom_modal(req, button_value, channel, ts, self.cfg.caps.size_step_bytes))
 
@@ -157,7 +164,10 @@ class Bridge:
             req = parse_request(metadata["value"])
         except (Invalid, KeyError, TypeError) as exc:
             return {messages.SIZE_BLOCK_ID: str(exc) or "invalid request"}
-        reasons = check(req, target, self.cfg.caps, int(self.clock()))
+        try:
+            reasons = check(req, target, self.cfg.caps, int(self.clock()))
+        except OverflowError:       # parse_size bounds the size, so this is not expected: an error in the form, never a crash
+            return {messages.SIZE_BLOCK_ID: "that size is out of range"}
         if reasons:
             return {messages.SIZE_BLOCK_ID: "; ".join(reasons)[:150]}
         return {}

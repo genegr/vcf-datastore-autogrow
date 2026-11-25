@@ -391,6 +391,61 @@ def test_app_builds_like_production_without_signing_secret(cfg, monkeypatch):
     assert built is not None
 
 
+# ------------------------------------------------------------------ robustness of the Custom form (second review, 2026-11-24)
+@pytest.mark.parametrize("text", ["9" * 400, "9" * 40 + " TiB", "1025 TiB", "1024.5 TiB", "1" + "0" * 30])
+def test_an_absurd_custom_size_is_refused_cleanly_not_with_a_crash(cfg, text):
+    """A size of hundreds of digits used to raise OverflowError in human() and kill the form handler unanswered."""
+    with pytest.raises(validate.Invalid):
+        validate.parse_size(text)
+    bridge, _, _ = make(cfg)
+    meta = {"value": value(tgt=None), "channel": CHANNEL, "ts": TS}
+    errors = bridge.submit_custom(user_id=APPROVER, user_name="demo", metadata=meta, size_text=text)
+    assert errors and any("range" in str(v) for v in errors.values()), errors
+
+
+def test_the_largest_size_the_form_takes_still_works():
+    assert validate.parse_size("1024 TiB") == 1024 ** 5
+    assert validate.human(validate.parse_size("1024 TiB")) == "1024 TiB"
+
+
+def test_an_overflow_anywhere_in_the_custom_check_is_an_error_in_the_form(cfg, monkeypatch):
+    """Belt and braces: whatever raises OverflowError inside the check must not escape the handler."""
+    bridge, _, _ = make(cfg)
+    monkeypatch.setattr(actions, "check", lambda *a, **k: (_ for _ in ()).throw(OverflowError("too large")))
+    meta = {"value": value(tgt=None), "channel": CHANNEL, "ts": TS}
+    errors = bridge.submit_custom(user_id=APPROVER, user_name="demo", metadata=meta, size_text="704 GiB")
+    assert errors, "the form must show an error, not die"
+
+
+def test_only_an_approver_can_open_the_custom_form(cfg):
+    bridge, slack, _ = make(cfg)
+    bridge.open_custom(trigger_id="t1", user_id=STRANGER, channel=CHANNEL, ts=TS, blocks=BLOCKS, button_value=value(tgt=None))
+    assert slack.names() == ["chat_postEphemeral"], "a stranger got the form"
+    assert bridge.blocks_cache == {}, "a stranger filled the cache"
+    bridge.open_custom(trigger_id="t2", user_id=APPROVER, channel=CHANNEL, ts=TS, blocks=BLOCKS, button_value=value(tgt=None))
+    assert slack.names()[-1] == "views_open"
+
+
+def test_the_blocks_cache_stays_bounded(cfg):
+    bridge, _, _ = make(cfg)
+    for n in range(actions.BLOCKS_CACHE_MAX + 60):
+        rid = "%08x-7d2a-4e8b-9c3f-1a2b3c4d5e6f" % n
+        bridge.open_custom(trigger_id="t", user_id=APPROVER, channel=CHANNEL, ts=TS, blocks=BLOCKS, button_value=value(tgt=None, rid=rid))
+    assert len(bridge.blocks_cache) == actions.BLOCKS_CACHE_MAX
+    assert "%08x-7d2a-4e8b-9c3f-1a2b3c4d5e6f" % (actions.BLOCKS_CACHE_MAX + 59) in bridge.blocks_cache, "the newest must be kept"
+    assert "%08x-7d2a-4e8b-9c3f-1a2b3c4d5e6f" % 0 not in bridge.blocks_cache, "the oldest goes first"
+
+
+@pytest.mark.parametrize("field,good", [("rid", RID), ("ds", "ds-capacity01"), ("vc", "vcenter01.example.lab"),
+                                        ("dev", "eui.00361019ecace43d24a93783000120a4")])
+def test_an_identifier_with_a_trailing_newline_is_refused(field, good):
+    """re.match(...$) accepts 'x\n'; the identifiers are matched whole."""
+    assert validate.parse_request(value(**{field: good})).rid
+    for bad in (good + "\n", good + "\r\n"):
+        with pytest.raises(validate.Invalid):
+            validate.parse_request(value(**{field: bad}))
+
+
 # ------------------------------------------------------------------ parity with the filter plugin
 def test_parse_size_matches_filter():
     import importlib.util
@@ -400,6 +455,11 @@ def test_parse_size_matches_filter():
     spec.loader.exec_module(f)
     for text in ["704", "704 GiB", "704G", "1.5 TiB", "1T", " 2 tib ", "0.25 TiB"]:
         assert validate.parse_size(text) == f.dsgrow_parse_size(text), text
-    for text in ["", "abc", "-5 GiB", "5 PB", "0.3 GiB"]:
+    for text in ["", "abc", "-5 GiB", "5 PB", "0.3 GiB", "9" * 400, "1025 TiB"]:
         with pytest.raises(validate.Invalid):
             validate.parse_size(text)
+    for text in ["9" * 400, "1025 TiB", "1" + "0" * 30]:
+        with pytest.raises(Exception) as exc:
+            f.dsgrow_parse_size(text)
+        assert "range" in str(exc.value), "the filter must refuse it the same way: %s" % exc.value
+    assert f.dsgrow_parse_size("1024 TiB") == validate.parse_size("1024 TiB") == 1024 ** 5

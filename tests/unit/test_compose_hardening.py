@@ -35,6 +35,23 @@ def test_the_network_facing_services_drop_every_capability(name):
     assert "no-new-privileges:true" in service["security_opt"]
 
 
+@pytest.mark.parametrize("name", ["rulebook", "bridge"])
+def test_the_network_facing_services_have_a_read_only_root_filesystem(name):
+    """Whatever they write goes to /tmp (a tmpfs) or, for the rulebook, state/ (the one writable bind mount)."""
+    service = _services()[name]
+    assert service["read_only"] is True
+    assert "/tmp" in service["tmpfs"]
+
+
+def test_the_rulebooks_ansible_temp_directories_are_on_the_tmpfs():
+    """Ansible's default temp directories are under ~/.ansible, resolved to the account's home in the image, which a
+    read-only root filesystem makes unwritable: every playbook the rulebook starts then fails with 'Failed to create
+    temporary directory' (seen 2026-11-25 with the offline rulebook test)."""
+    env = _services()["rulebook"]["environment"]
+    for key in ("ANSIBLE_LOCAL_TEMP", "ANSIBLE_REMOTE_TEMP"):
+        assert env[key].startswith("/tmp/"), "%s=%r must be under the /tmp tmpfs" % (key, env.get(key))
+
+
 def test_the_bridge_mounts_nothing():
     assert "volumes" not in _services()["bridge"], "its code is baked into the image"
 
@@ -50,7 +67,8 @@ def test_offline_checks_run_under_the_services_own_settings():
     """The claim above: the rulebook test and the flow tests use the flags compose.yaml gives the rulebook service."""
     for script in ("offline.sh", "flow_tests.sh"):
         text = (ROOT / "tools" / script).read_text(encoding="utf-8")
-        for flag in ("--network none", "--cap-drop ALL", "--security-opt no-new-privileges:true", "/work:ro"):
+        for flag in ("--network none", "--read-only", "--tmpfs /tmp", "--cap-drop ALL", "--security-opt no-new-privileges:true",
+                     "/work:ro"):
             assert flag in text, "tools/%s lacks %s" % (script, flag)
     offline = (ROOT / "tools" / "offline.sh").read_text(encoding="utf-8")
     assert "--tmpfs /work/.state" in offline and "tests/rulebook" in offline and "tools/flow_tests.sh" in offline

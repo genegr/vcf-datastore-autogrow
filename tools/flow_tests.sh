@@ -13,7 +13,7 @@ args=$(mktemp -d)
 trap 'rm -rf "$args"' EXIT
 
 run() {
-  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+  docker run --rm --network none --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
     --user "$(id -u):$(id -g)" -v "$PWD:/work:ro" --tmpfs /work/.state -v "$args:/args:ro" \
     -e HOME=/tmp -w /work "$IMAGE" "$@"
 }
